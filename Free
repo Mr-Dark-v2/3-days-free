@@ -13,7 +13,7 @@ if not PlayerGui then return end
 local allowedUserIDs = {
     [974723668] = true,  -- Dio
     [4138409476] = true,  -- Hussam main
-    [47783597620] = true   -- catchingmk4
+    [438661130] = true   -- furryted discord1
 }
 
 -- Function to display temporary messages (kept for potential future use, but access messages removed)
