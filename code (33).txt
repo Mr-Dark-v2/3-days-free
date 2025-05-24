@@ -1,0 +1,528 @@
+--[[
+    THE MIST Triggerbot v27 (24) - FINAL EXPLICIT OPPONENTS + Delay Mode Switcher
+    Features Included:
+    - **NEW:** Replaced delay buttons with a sliding switcher (Blatant 0ms / Normal 264ms).
+    - Shoot Delay applied before shot/visuals.
+    - Multi-shot fixed.
+    - Explicit Team Check.
+    - Global Cooldown Lock.
+    - tool:Activate() called.
+    - BulletRenderer call.
+    - Shared Cooldown.
+    - Bottom-Left Invisible Toggle Button.
+    - No Debug Prints.
+    - Default targetingFOV set to 35.
+    - Clean Theme, Tap-to-Exclude, Stealth Mode toggle/animations, Delayed Visibility Fix, FOV revert.
+    - Default fallback cooldown value (0.5s).
+    - **GUI ADAPTATION:** Added viewport constraints for better multi-device compatibility.
+--]]
+
+--- START OF MODIFIED SCRIPT v27 (24 - Delay Mode Switcher + GUI Adaptation) ---
+
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local GuiService = game:GetService("GuiService")
+local CoreGui = game:GetService("CoreGui")
+local Camera = workspace.CurrentCamera
+local gameDefaultFOV = Camera.FieldOfView
+local Debris = game:GetService("Debris")
+local SoundService = game:GetService("SoundService")
+
+-- Player and Character Setup
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local backpack = player:WaitForChild("Backpack")
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- State Variables (Defaults set for Stealth Mode start)
+local isAutoTargetEnabled = true; local lastShotTime = 0; -- lastShotTime is shared
+local COOLDOWN = 0.5; -- Fallback Cooldown (Used if Tool Attribute missing/invalid)
+local targetingFOV = 35; -- <<< SET DEFAULT TARGET FOV TO 35
+local currentDelayMode = "Blatant" -- <<< MODIFIED: Default to Blatant mode
+local shootDelayMilliseconds = (currentDelayMode == "Normal") and 264 or 0 -- <<< Delay derived from mode
+local fovCircle = nil;
+local excludedPlayers = {};
+local isStealthMode = true -- Defaulting to Stealth Mode ON
+local isESPEnabled = false; -- Default OFF in Stealth Mode
+local isFOVChangerEnabled = false; -- Default OFF in Stealth Mode
+local defaultScriptFOV = 115;
+local currentCameraFOV = gameDefaultFOV; -- Start with game default in Stealth Mode
+
+-- Shared Cooldown & Global Lock Variables
+local currentTool = nil
+local activatedConnection = nil
+local currentEffectiveCooldown = 0 -- Stores the cooldown duration of the *last* shot
+
+-- Forward declare functions
+local createBeautifulGUI
+local updateFOVCircle, updateAllExcludedLabelsVisibility, toggleESP, setSliderEnabled, setSliderValue, updateExcludedLabel, setupToolListener, calculateEffectiveCooldown, findTool
+
+-- Attempt to require the BulletRenderer module
+local BulletRenderer_upvr = nil
+local successBulletRenderer, errBulletRenderer = pcall(function()
+	local modulesFolder = ReplicatedStorage:FindFirstChild("Modules")
+	if modulesFolder and modulesFolder:FindFirstChild("BulletRenderer") then
+		BulletRenderer_upvr = require(modulesFolder.BulletRenderer)
+	end
+end)
+
+-- GUI Configuration (Cleaned Theme)
+local THEME = { Background = Color3.fromRGB(18, 18, 22), BackgroundSlightlyLighter = Color3.fromRGB(24, 24, 28), BackgroundSubtleVariant = Color3.fromRGB(21, 21, 25), Primary = Color3.fromRGB(35, 35, 45), PrimaryLighter = Color3.fromRGB(45, 45, 55), Secondary = Color3.fromRGB(55, 55, 65), Tertiary = Color3.fromRGB(75, 75, 85), Accent = Color3.fromRGB(0, 180, 180), AccentAlt = Color3.fromRGB(0, 140, 140), Text = Color3.fromRGB(235, 235, 245), TextActive = Color3.fromRGB(255, 255, 255), TextDisabled = Color3.fromRGB(110, 110, 120), TextPlayerListNormal = Color3.fromRGB(240, 240, 250), Success = Color3.fromRGB(30, 200, 130), Error = Color3.fromRGB(250, 60, 80), ExcludedIcon = Color3.fromRGB(250, 60, 80), Tooltip = Color3.fromRGB(8, 8, 10), ButtonText = Color3.fromRGB(240, 240, 250), ButtonBackground = Color3.fromRGB(35, 35, 45), ButtonBackgroundHover = Color3.fromRGB(45, 45, 55), ButtonOutline = Color3.fromRGB(75, 75, 85), ButtonOutlineHover = Color3.fromRGB(0, 180, 180), SliderTrack = Color3.fromRGB(55, 55, 65), SliderTrackDisabled = Color3.fromRGB(35, 35, 45), SliderThumbBorder = Color3.fromRGB(18, 18, 22), SliderThumbBorderDisabled = Color3.fromRGB(35, 35, 45), ExcludeLabelBg = Color3.fromRGB(50, 10, 50), ExcludeLabelOutline = Color3.fromRGB(220, 220, 220), Font = Enum.Font.GothamSemibold, FontTitle = Enum.Font.GothamBold, FontIcon = Enum.Font.SourceSansBold, FontRegular = Enum.Font.Gotham, TextSize = 11, SmallTextSize = 9, TitleSize = 12, IconSize = 14, SubtitleSize = 8, DisclaimerSize = 7, CornerRadius = 6, Padding = 6, ElementHeight = 24, SmallElementHeight = 20, SliderHeight = 4, SliderThumbSize = 12, PanelMinWidth = 190, PanelMaxWidth = 285, AnimationSpeed = 0.2, ScaleFactorHover = 1.02, ScaleFactorPress = 0.98, StrokeThickness = 1, ButtonOutlineThickness = 1.5, StrokeTransparency = 0.6, StrokeTransparencyHover = 0.4, RefExcludedColor = Color3.fromRGB(255, 0, 0), RefFOVCircleColor = Color3.fromRGB(128, 0, 128), TextColorFadeDuration = 0.25 }
+local TextColorTweenInfo = TweenInfo.new(THEME.TextColorFadeDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut); local DimTweenInfo = TweenInfo.new(THEME.AnimationSpeed, Enum.EasingStyle.Sine, Enum.EasingDirection.Out);
+local SwitchAnimationInfo = TweenInfo.new(0.25, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out) -- Animation for delay switch
+
+-- ESP Storage & Cleanup
+local Storage = Instance.new("Folder", CoreGui) Storage.Name = "TheMist_Storage_DelaySwitcher_V24" -- Updated name
+local function cleanupOldStorage() for _, v in ipairs(CoreGui:GetChildren()) do if v:IsA("Folder") and v.Name:match("Storage") and v ~= Storage then v:Destroy() end end end; cleanupOldStorage()
+
+-- GUI Elements Storage & Tooltip
+local GuiElements = {}
+local TooltipLabel = nil
+local mainFrame = nil
+local panelVisible = false
+local viewportFrame = nil -- <<< NEW: For viewport constraining
+
+--[[ CORE LOGIC FUNCTIONS ]]
+-- ... (calculateEffectiveCooldown, createDrawingCircle, updateFOVCircle, updateExcludedLabel, updateAllExcludedLabelsVisibility, applyHighlight, removeHighlight, toggleESP, getShootEvent, findTool, isVisible, isWithinFOV, setupToolListener, findClosestEnemy, shoot functions remain unchanged) ...
+function calculateEffectiveCooldown(toolInstance)
+    if not toolInstance or not toolInstance:IsA("Tool") then return COOLDOWN end
+    local gameCooldown = toolInstance:GetAttribute("Cooldown")
+    return (type(gameCooldown) == "number" and gameCooldown > 0) and gameCooldown or COOLDOWN
+end
+
+function createDrawingCircle() if not pcall(function() local _ = Drawing.new end) then return nil end local circle = Drawing.new("Circle"); circle.Thickness = 2; circle.Color = THEME.RefFOVCircleColor; circle.Transparency = 0.5; circle.Filled = false; circle.NumSides = 64; circle.Visible = false; return circle end
+function updateFOVCircle() if not fovCircle then return end; local shouldBeVisible = isAutoTargetEnabled and (not isStealthMode or panelVisible); fovCircle.Visible = shouldBeVisible; if not shouldBeVisible then return end; local screenSize = Camera.ViewportSize; if not screenSize or screenSize.X == 0 or screenSize.Y == 0 then fovCircle.Visible = false; return end; fovCircle.Position = screenSize / 2; local fovRad = math.rad(targetingFOV / 2); local camFovRad = math.rad(Camera.FieldOfView / 2); if fovRad <= 0 or camFovRad <= 0 or math.tan(camFovRad) == 0 then fovCircle.Visible = false; return end; local radius = (screenSize.Y / 2) * math.tan(fovRad) / math.tan(camFovRad); fovCircle.Radius = math.max(0, radius); end
+function updateExcludedLabel(targetPlayer) local char = targetPlayer.Character; if not char or not char:FindFirstChild("Head") then return end; local head = char.Head; local billboard = head:FindFirstChild("ExcludeLabel"); local isExcluded = excludedPlayers[targetPlayer]; if isExcluded then if not billboard then billboard = Instance.new("BillboardGui", head); billboard.Name = "ExcludeLabel"; billboard.Size = UDim2.new(0, 85, 0, 22); billboard.StudsOffset = Vector3.new(0, 2.4, 0); billboard.AlwaysOnTop = true; billboard.LightInfluence = 0; billboard.ClipsDescendants = true; local textLabel = Instance.new("TextLabel", billboard); textLabel.Size = UDim2.fromScale(1, 1); textLabel.BackgroundColor3 = THEME.ExcludeLabelBg; textLabel.BackgroundTransparency = 0.2; textLabel.Font = Enum.Font.GothamSemibold; textLabel.Text = "EXCLUDED"; textLabel.TextColor3 = THEME.RefExcludedColor; textLabel.TextSize = 11; textLabel.TextScaled = false; textLabel.TextXAlignment = Enum.TextXAlignment.Center; textLabel.TextYAlignment = Enum.TextYAlignment.Center; local corner = Instance.new("UICorner", textLabel); corner.CornerRadius = UDim.new(0, 3); local stroke = Instance.new("UIStroke", textLabel); stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; stroke.Color = THEME.ExcludeLabelOutline; stroke.Thickness = 1; stroke.Transparency = 0.3; end; billboard.Enabled = (not isStealthMode or panelVisible); else if billboard then billboard:Destroy() end end end
+function updateAllExcludedLabelsVisibility() local desiredVisibility = (not isStealthMode or panelVisible); for plr, _ in pairs(excludedPlayers) do if plr and plr.Character and plr.Character:FindFirstChild("Head") then local billboard = plr.Character.Head:FindFirstChild("ExcludeLabel"); if billboard then billboard.Enabled = desiredVisibility end end end end
+function applyHighlight(plr) if plr == player then return end; local existing = Storage:FindFirstChild(plr.Name); if existing then existing:Destroy() end; local highlight = Instance.new("Highlight", Storage); highlight.Name = plr.Name; highlight.FillColor = plr.Team and plr.Team.TeamColor.Color or Color3.fromRGB(255, 255, 255); highlight.FillTransparency = 0.5; highlight.OutlineColor = Color3.fromRGB(255, 255, 255); highlight.OutlineTransparency = 0; highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; highlight.Enabled = isESPEnabled; if plr.Character then highlight.Adornee = plr.Character end; plr.CharacterAdded:Connect(function(char) if highlight and highlight.Parent then highlight.Adornee = char end end); plr.CharacterRemoving:Connect(function() if highlight and highlight.Parent then highlight.Adornee = nil end end); return highlight end
+function removeHighlight(plr) if plr then local existing = Storage:FindFirstChild(plr.Name); if existing then existing:Destroy() end end end
+function toggleESP(enabled) if isStealthMode and enabled == true then return end; isESPEnabled = enabled; if enabled then for _, plr in pairs(Players:GetPlayers()) do if plr ~= player then local h = Storage:FindFirstChild(plr.Name); if h then h.Enabled = true else applyHighlight(plr) end end end else for _, highlight in pairs(Storage:GetChildren()) do if highlight:IsA("Highlight") then highlight.Enabled = false end end end; if GuiElements.espButton then local newStateText = isESPEnabled and "ESP: ON" or "ESP: OFF"; local newTextColor = isESPEnabled and THEME.Success or THEME.Error; GuiElements.espButton.Text = newStateText; GuiElements.espButton:SetAttribute("CurrentTextColor", newTextColor); TweenService:Create(GuiElements.espButton, TextColorTweenInfo, { TextColor3 = newTextColor }):Play() end end
+function getShootEvent() local remotes = ReplicatedStorage:FindFirstChild("Remotes"); return remotes and remotes:FindFirstChild("Shoot") end
+function findTool()
+    if character then for _, child in pairs(character:GetChildren()) do if child:IsA("Tool") then return child end end end
+    if backpack then for _, child in pairs(backpack:GetChildren()) do if child:IsA("Tool") then return child end end end
+    return nil
+end
+function isVisible(targetCharacter) if not character or not character:FindFirstChild("HumanoidRootPart") then return false end; local startPos = character.HumanoidRootPart.Position; local partsToCheck = {"Head", "LeftHand", "RightHand", "LeftFoot", "RightFoot", "HumanoidRootPart"}; local raycastParams = RaycastParams.new(); raycastParams.FilterDescendantsInstances = {character, Storage}; raycastParams.FilterType = Enum.RaycastFilterType.Blacklist; raycastParams.IgnoreWater = true; for _, partName in pairs(partsToCheck) do local targetPart = targetCharacter:FindFirstChild(partName); if targetPart then local targetPos = targetPart.Position; local direction = targetPos - startPos; local distance = direction.Magnitude; if distance < 0.1 then continue end; local rayResult = workspace:Raycast(startPos, direction.Unit * distance, raycastParams); if not rayResult or rayResult.Instance:IsDescendantOf(targetCharacter) then return true end end end; return false end
+function isWithinFOV(targetPart) if not character or not character:FindFirstChild("HumanoidRootPart") then return false end; local cameraCFrame = Camera.CFrame; local targetPos = targetPart.Position; local cameraPos = cameraCFrame.Position; if (targetPos - cameraPos).Magnitude < 0.1 then return true end; local directionToTarget = (targetPos - cameraPos).Unit; local cameraLook = cameraCFrame.LookVector; local dot = math.clamp(directionToTarget:Dot(cameraLook), -1, 1); local angle = math.deg(math.acos(dot)); return angle <= (targetingFOV / 2) end
+
+function setupToolListener(toolInstance)
+    if activatedConnection then activatedConnection:Disconnect(); activatedConnection = nil end
+    if currentTool and currentTool ~= toolInstance and not currentTool.Enabled then pcall(function() currentTool.Enabled = true end) end
+    currentTool = toolInstance
+    if toolInstance and toolInstance:IsA("Tool") then
+        local cooldownActive = currentEffectiveCooldown > 0 and (tick() - lastShotTime < currentEffectiveCooldown)
+        pcall(function() toolInstance.Enabled = not cooldownActive end)
+        activatedConnection = toolInstance.Activated:Connect(function()
+            lastShotTime = tick()
+            currentEffectiveCooldown = calculateEffectiveCooldown(toolInstance)
+            if toolInstance then pcall(function() toolInstance.Enabled = false end) end
+        end)
+    else
+         currentEffectiveCooldown = 0
+    end
+end
+
+function findClosestEnemy()
+    local maxDistance = 400; local closestEnemy = nil; local closestDistance = maxDistance;
+    local playerRootPart = character and character:FindFirstChild("HumanoidRootPart")
+    if not playerRootPart then return nil end
+    local playerRootPos = playerRootPart.Position; local myTeam = player.Team
+    if not myTeam then return nil end
+    for _, targetPlayer in pairs(Players:GetPlayers()) do
+        if targetPlayer ~= player and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart") and targetPlayer.Character:FindFirstChildOfClass("Humanoid") then
+            local targetChar = targetPlayer.Character; local targetRoot = targetChar.HumanoidRootPart;
+            local targetHumanoid = targetChar:FindFirstChildOfClass("Humanoid"); local targetTeam = targetPlayer.Team
+            local isActualOpponent = false
+            if targetTeam then
+                if myTeam.Name == "Team1" and targetTeam.Name == "Team2" then isActualOpponent = true
+                elseif myTeam.Name == "Team2" and targetTeam.Name == "Team1" then isActualOpponent = true end
+            end
+            if targetHumanoid.Health > 0 and not excludedPlayers[targetPlayer] and isActualOpponent then
+                local distance = (playerRootPos - targetRoot.Position).Magnitude;
+                if distance < closestDistance then
+                    if isVisible(targetChar) and isWithinFOV(targetRoot) then
+                        closestDistance = distance; closestEnemy = targetPlayer;
+                    end
+                end
+            end
+        end
+    end
+    return closestEnemy
+end
+
+function shoot()
+    if not isAutoTargetEnabled then return end;
+    if not character or not character.Parent then return end
+    if not character:FindFirstChild("HumanoidRootPart") then return end;
+
+    local tool = currentTool
+    if not tool or tool.Parent ~= character then
+        tool = findTool()
+        if tool and tool.Parent == character then setupToolListener(tool) else return end
+    end
+
+    local shootEvent = getShootEvent(); if not shootEvent then return end;
+    local effectiveCooldown = calculateEffectiveCooldown(tool); local currentTime = tick();
+
+    if currentTime - lastShotTime < effectiveCooldown then return end
+
+    local targetEnemy = findClosestEnemy();
+    if targetEnemy and targetEnemy.Character and targetEnemy.Character:FindFirstChild("HumanoidRootPart") then
+        lastShotTime = currentTime
+        currentEffectiveCooldown = effectiveCooldown
+
+        local toolAtDecision = tool
+        local targetPartAtDecision = targetEnemy.Character.HumanoidRootPart;
+        local targetPosAtDecision = targetPartAtDecision.Position
+        local fireSoundAtDecision = tool:FindFirstChild("Fire");
+        local bulletTypeAtDecision = tool:GetAttribute("BulletType");
+        local startPosAtDecision;
+        local muzzleAttach = tool:FindFirstChild("Muzzle", true);
+        if muzzleAttach and muzzleAttach:IsA("Attachment") then startPosAtDecision = muzzleAttach.WorldPosition
+        else local handle = tool:FindFirstChild("Handle"); startPosAtDecision = (handle and handle:IsA("BasePart") and handle.Position) or character.HumanoidRootPart.Position end;
+
+        task.spawn(function()
+            if shootDelayMilliseconds > 0 then
+                task.wait(shootDelayMilliseconds / 1000)
+            end
+            if not toolAtDecision or toolAtDecision.Parent ~= character then return end
+            if not character or not character.Parent then return end
+            if not targetEnemy or not targetEnemy.Parent or not targetEnemy.Character or not targetEnemy.Character.Parent then return end
+            local targetHumanoid = targetEnemy.Character:FindFirstChildOfClass("Humanoid")
+            local targetRootPart = targetEnemy.Character:FindFirstChild("HumanoidRootPart")
+            if not targetHumanoid or not targetRootPart or targetHumanoid.Health <= 0 or excludedPlayers[targetEnemy] then return end
+
+            local currentTargetPos = targetRootPart.Position
+            local currentTargetPart = targetRootPart
+
+            local successFire, errFire = pcall(function()
+                shootEvent:FireServer(character.HumanoidRootPart.Position, currentTargetPos, currentTargetPart, currentTargetPos) -- Uses CURRENT position
+            end)
+
+            if successFire then
+                if fireSoundAtDecision and fireSoundAtDecision:IsA("Sound") then pcall(function() fireSoundAtDecision:Play() end) end;
+                if BulletRenderer_upvr and muzzleAttach then pcall(BulletRenderer_upvr, startPosAtDecision, currentTargetPos, bulletTypeAtDecision) end; -- Visual uses current pos
+                pcall(function() toolAtDecision:Activate() end);
+                task.wait()
+                if toolAtDecision and toolAtDecision.Parent == character then
+                    pcall(function() toolAtDecision.Enabled = false end)
+                end
+            end
+        end)
+    end
+end
+
+--[[ GUI CREATION AND MANAGEMENT ]]
+-- ... (getTooltipLabel, showTooltip, hideTooltip, createStyledButton, updateSliderStyle, setSliderEnabled, setSliderValue, createSlider, toggleStealthMode functions remain unchanged) ...
+function getTooltipLabel(parent) if TooltipLabel and TooltipLabel.Parent then return TooltipLabel end TooltipLabel = Instance.new("Frame", parent); TooltipLabel.Name = "TooltipFrame"; TooltipLabel.Size = UDim2.new(0, 100, 0, 25); TooltipLabel.BackgroundColor3 = THEME.Tooltip; TooltipLabel.BackgroundTransparency = 0.05; TooltipLabel.BorderSizePixel = 0; TooltipLabel.Position = UDim2.new(0, 0, 0, 0); TooltipLabel.ZIndex = 100; TooltipLabel.Visible = false; TooltipLabel.ClipsDescendants = true; local corner = Instance.new("UICorner", TooltipLabel); corner.CornerRadius = UDim.new(0, 3); local padding = Instance.new("UIPadding", TooltipLabel); padding.PaddingLeft = UDim.new(0, 5); padding.PaddingRight = UDim.new(0, 5); padding.PaddingTop = UDim.new(0, 3); padding.PaddingBottom = UDim.new(0, 3); local textLabel = Instance.new("TextLabel", TooltipLabel); textLabel.Name = "TooltipText"; textLabel.Size = UDim2.new(1, 0, 1, 0); textLabel.BackgroundTransparency = 1; textLabel.TextColor3 = THEME.TextDisabled; textLabel.Font = THEME.Font; textLabel.TextSize = THEME.SmallTextSize; textLabel.TextXAlignment = Enum.TextXAlignment.Center; textLabel.TextYAlignment = Enum.TextYAlignment.Center; textLabel.Text = "Tooltip"; textLabel.ZIndex = 101; textLabel.RichText = true; local textConstraint = Instance.new("UITextSizeConstraint", textLabel); textConstraint.MaxTextSize = THEME.SmallTextSize; local function updateSize() task.wait(); if not textLabel or not textLabel.Parent then return end; TooltipLabel.Size = UDim2.new(0, textLabel.TextBounds.X + 10, 0, textLabel.TextBounds.Y + 6) end; textLabel:GetPropertyChangedSignal("Text"):Connect(updateSize); updateSize(); return TooltipLabel end
+function showTooltip(guiObject, text) if not TooltipLabel or not TooltipLabel.Parent then return end local textLabel = TooltipLabel:FindFirstChild("TooltipText"); if not textLabel then return end; textLabel.Text = text; local mousePos = UserInputService:GetMouseLocation(); local guiInset = GuiService:GetGuiInset(); local offsetX, offsetY = 15, 10; TooltipLabel.Position = UDim2.new(0, mousePos.X + offsetX, 0, mousePos.Y - guiInset.Y + offsetY); task.wait(); local viewportSize = Camera.ViewportSize; local absSize = TooltipLabel.AbsoluteSize; local currentPosX, currentPosY = TooltipLabel.Position.X.Offset, TooltipLabel.Position.Y.Offset; if currentPosX + absSize.X > viewportSize.X then currentPosX = mousePos.X - absSize.X - offsetX end; if currentPosY + absSize.Y > viewportSize.Y - guiInset.Y then currentPosY = mousePos.Y - absSize.Y - offsetY - guiInset.Y end; TooltipLabel.Position = UDim2.new(0, currentPosX, 0, currentPosY); TooltipLabel.Visible = true end
+function hideTooltip() if TooltipLabel then TooltipLabel.Visible = false end end
+function createStyledButton(parent, initialText, initialTextColor, position, size, tooltipText) local button = Instance.new("TextButton", parent); button.Size = size; button.Position = position; button.BackgroundColor3 = THEME.ButtonBackground; button.Font = THEME.Font; button.Text = initialText; button.TextColor3 = initialTextColor; button.TextSize = THEME.TextSize; button.AutoButtonColor = false; button.ClipsDescendants = true; local corner = Instance.new("UICorner", button); corner.CornerRadius = UDim.new(0, THEME.CornerRadius); local stroke = Instance.new("UIStroke", button); stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; stroke.Color = THEME.ButtonOutline; stroke.Thickness = THEME.ButtonOutlineThickness; stroke.Transparency = THEME.StrokeTransparency; local uiScale = Instance.new("UIScale", button); uiScale.Scale = 1; button:SetAttribute("Hovering", false); button:SetAttribute("Tooltip", tooltipText or ""); button:SetAttribute("CurrentTextColor", initialTextColor); local hoverTweenInfo = TweenInfo.new(THEME.AnimationSpeed, Enum.EasingStyle.Sine, Enum.EasingDirection.Out); local pressTweenInfo = TweenInfo.new(THEME.AnimationSpeed * 0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.Out); local scaleTweenInfo = TweenInfo.new(THEME.AnimationSpeed, Enum.EasingStyle.Back, Enum.EasingDirection.Out); button.MouseEnter:Connect(function() button:SetAttribute("Hovering", true); TweenService:Create(stroke, hoverTweenInfo, { Color = THEME.ButtonOutlineHover }):Play(); TweenService:Create(button, hoverTweenInfo, { BackgroundColor3 = THEME.ButtonBackgroundHover }):Play(); TweenService:Create(uiScale, scaleTweenInfo, { Scale = THEME.ScaleFactorHover }):Play(); if button:GetAttribute("Tooltip") ~= "" then showTooltip(button, button:GetAttribute("Tooltip")) end end); button.MouseLeave:Connect(function() button:SetAttribute("Hovering", false); TweenService:Create(stroke, hoverTweenInfo, { Color = THEME.ButtonOutline }):Play(); TweenService:Create(button, hoverTweenInfo, { BackgroundColor3 = THEME.ButtonBackground }):Play(); TweenService:Create(uiScale, scaleTweenInfo, { Scale = 1 }):Play(); hideTooltip() end); button.MouseButton1Down:Connect(function() TweenService:Create(uiScale, pressTweenInfo, { Scale = THEME.ScaleFactorPress }):Play(); hideTooltip() end); button.MouseButton1Up:Connect(function() local targetScale = button:GetAttribute("Hovering") and THEME.ScaleFactorHover or 1; local targetBgColor = button:GetAttribute("Hovering") and THEME.ButtonBackgroundHover or THEME.ButtonBackground; local targetOutlineColor = button:GetAttribute("Hovering") and THEME.ButtonOutlineHover or THEME.ButtonOutline; TweenService:Create(uiScale, scaleTweenInfo, { Scale = targetScale }):Play(); TweenService:Create(button, hoverTweenInfo, { BackgroundColor3 = targetBgColor }):Play(); TweenService:Create(stroke, hoverTweenInfo, { Color = targetOutlineColor }):Play(); if button:GetAttribute("Hovering") and button:GetAttribute("Tooltip") ~= "" then showTooltip(button, button:GetAttribute("Tooltip")) end end); return button end
+function updateSliderStyle(sliderContainer, value, isEnabled) if not sliderContainer or not sliderContainer:IsA("Frame") then return end local valueLabel = sliderContainer:FindFirstChild("ValueLabel") local sliderTrack = sliderContainer:FindFirstChild("SliderTrack") if not valueLabel or not sliderTrack then return end local sliderFill = sliderTrack:FindFirstChild("SliderFill") local sliderThumb = sliderTrack:FindFirstChild("SliderThumb") if not sliderFill or not sliderThumb then return end local minValue = sliderContainer:GetAttribute("MinValue") or 0 local maxValue = sliderContainer:GetAttribute("MaxValue") or 100 local range = maxValue - minValue if range <= 0 then range = 1 end local percentage = math.clamp((value - minValue) / range, 0, 1) sliderThumb.Position = UDim2.new(percentage, 0, 0.5, 0) sliderFill.Size = UDim2.new(percentage, 0, 1, 0) valueLabel.Text = tostring(math.floor(value)) local thumbColor = isEnabled and THEME.AccentAlt or THEME.Tertiary local fillColor = isEnabled and THEME.Accent or THEME.Tertiary local valueColor = isEnabled and THEME.Text or THEME.TextDisabled local trackColor = isEnabled and THEME.SliderTrack or THEME.SliderTrackDisabled local thumbBorderColor = isEnabled and THEME.SliderThumbBorder or THEME.SliderThumbBorderDisabled sliderThumb.BackgroundColor3 = thumbColor sliderFill.BackgroundColor3 = fillColor valueLabel.TextColor3 = valueColor sliderTrack.BackgroundColor3 = trackColor sliderThumb.BorderColor3 = thumbBorderColor end
+function setSliderEnabled(sliderContainer, enabled) if not sliderContainer or not sliderContainer:IsA("Frame") then return end sliderContainer:SetAttribute("Enabled", enabled) local valueLabel = sliderContainer:FindFirstChild("ValueLabel") local currentVal = tonumber(valueLabel and valueLabel.Text or sliderContainer:GetAttribute("InitialValue") or 0) updateSliderStyle(sliderContainer, currentVal, enabled) end
+function setSliderValue(sliderContainer, value) if not sliderContainer or not sliderContainer:IsA("Frame") then return end local minValue = sliderContainer:GetAttribute("MinValue") or 0 local maxValue = sliderContainer:GetAttribute("MaxValue") or 100 local clampedValue = math.clamp(value, minValue, maxValue) local isEnabled = sliderContainer:GetAttribute("Enabled") updateSliderStyle(sliderContainer, clampedValue, isEnabled); end
+function createSlider(parent, labelText, minValue, maxValue, initialValue, valueChangedCallback, tooltipText) local container = Instance.new("Frame"); container.Size = UDim2.new(1, 0, 0, THEME.ElementHeight * 1.5); container.BackgroundTransparency = 1; container.Parent = parent; container:SetAttribute("Tooltip", tooltipText or ""); container:SetAttribute("Enabled", true); container:SetAttribute("MinValue", minValue); container:SetAttribute("MaxValue", maxValue); container:SetAttribute("InitialValue", initialValue); local label = Instance.new("TextLabel", container); label.Size = UDim2.new(0.7, 0, 0, THEME.SmallElementHeight); label.Position = UDim2.new(0, 0, 0, 0); label.BackgroundTransparency = 1; label.TextColor3 = THEME.TextDisabled; label.Font = THEME.Font; label.TextSize = THEME.SmallTextSize; label.Text = labelText; label.TextXAlignment = Enum.TextXAlignment.Left; local valueLabel = Instance.new("TextLabel", container); valueLabel.Name = "ValueLabel"; valueLabel.Size = UDim2.new(0.3, 0, 0, THEME.SmallElementHeight); valueLabel.Position = UDim2.new(0.7, 0, 0, 0); valueLabel.BackgroundTransparency = 1; valueLabel.TextColor3 = THEME.Text; valueLabel.Font = THEME.Font; valueLabel.TextSize = THEME.SmallTextSize; valueLabel.Text = tostring(math.floor(initialValue)); valueLabel.TextXAlignment = Enum.TextXAlignment.Right; local sliderTrack = Instance.new("Frame", container); sliderTrack.Name = "SliderTrack"; sliderTrack.Size = UDim2.new(1, 0, 0, THEME.SliderHeight + 6); sliderTrack.Position = UDim2.new(0, 0, 1, -(THEME.SliderHeight + 6) - 4); sliderTrack.BackgroundColor3 = THEME.SliderTrack; local trackCorner = Instance.new("UICorner", sliderTrack); trackCorner.CornerRadius = UDim.new(0, (THEME.SliderHeight + 6) / 2); local trackStroke = Instance.new("UIStroke", sliderTrack); trackStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; trackStroke.Color = THEME.Tertiary; trackStroke.Thickness = 1; trackStroke.Transparency = 0.7; local sliderFill = Instance.new("Frame", sliderTrack); sliderFill.Name = "SliderFill"; sliderFill.Size = UDim2.new(0,0,1,0); sliderFill.BackgroundColor3 = THEME.Accent; sliderFill.BorderSizePixel = 0; local fillCorner = Instance.new("UICorner", sliderFill); fillCorner.CornerRadius = UDim.new(0, (THEME.SliderHeight + 6) / 2); local sliderThumb = Instance.new("Frame", sliderTrack); sliderThumb.Name = "SliderThumb"; local thumbActualSize = THEME.SliderThumbSize; sliderThumb.Size = UDim2.fromOffset(thumbActualSize, thumbActualSize); sliderThumb.AnchorPoint = Vector2.new(0.5, 0.5); sliderThumb.Position = UDim2.new(0, 0, 0.5, 0); sliderThumb.BackgroundColor3 = THEME.AccentAlt; sliderThumb.BorderSizePixel = 2; sliderThumb.BorderColor3 = THEME.SliderThumbBorder; local thumbCorner = Instance.new("UICorner", sliderThumb); thumbCorner.CornerRadius = UDim.new(0.5, 0); local thumbScale = Instance.new("UIScale", sliderThumb); thumbScale.Scale = 1; local dragging = false; local inputChangedConn = nil; local inputEndedConn = nil; local thumbTweenInfo = TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out); local function updateSlider(inputPos) if not container:GetAttribute("Enabled") then return end local relativePos = sliderTrack.AbsolutePosition; local trackSize = sliderTrack.AbsoluteSize; if trackSize.X <= 0 then return end local thumbRadius = sliderThumb.AbsoluteSize.X / 2; local usableWidth = trackSize.X - (thumbRadius * 2); if usableWidth <=0 then usableWidth = 1 end local rawX = inputPos.X - relativePos.X - thumbRadius; local percentage = math.clamp(rawX / usableWidth, 0, 1); local value = minValue + (maxValue - minValue) * percentage; local newValue = math.floor(value); updateSliderStyle(container, newValue, true); if valueChangedCallback then valueChangedCallback(newValue); end end; updateSliderStyle(container, initialValue, true);
+	local function onInputBegan(input) if not container:GetAttribute("Enabled") then return end; if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = true; TweenService:Create(thumbScale, thumbTweenInfo, {Scale = 1.1}):Play(); updateSlider(input.Position); hideTooltip(); if inputChangedConn then inputChangedConn:Disconnect() end; if inputEndedConn then inputEndedConn:Disconnect() end; inputEndedConn = input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false; TweenService:Create(thumbScale, thumbTweenInfo, {Scale = 1}):Play(); if inputChangedConn then inputChangedConn:Disconnect(); inputChangedConn = nil end; if inputEndedConn then inputEndedConn:Disconnect(); inputEndedConn = nil end end end); inputChangedConn = RunService.RenderStepped:Connect(function() if dragging then updateSlider(UserInputService:GetMouseLocation()) else if inputChangedConn then inputChangedConn:Disconnect(); inputChangedConn = nil end end end) end end; sliderTrack.InputBegan:Connect(onInputBegan); sliderThumb.InputBegan:Connect(onInputBegan); container.MouseEnter:Connect(function() if container:GetAttribute("Tooltip") ~= "" and not dragging then showTooltip(container, container:GetAttribute("Tooltip")) end end); container.MouseLeave:Connect(function() if not dragging then hideTooltip() end end); return container, valueLabel end
+local function toggleStealthMode()
+	isStealthMode = not isStealthMode
+	local targetTooltip = isStealthMode and "Switch to Normal Mode" or "Switch to Stealth Mode"
+	local targetStrokeColor = isStealthMode and THEME.Error or THEME.Accent
+	local targetCoreColor = isStealthMode and THEME.Error or THEME.Accent
+	local stealthBtnClickArea = GuiElements.stealthModeClickButton
+    local stealthBtnContainer = GuiElements.stealthModeStroke and GuiElements.stealthModeStroke.Parent
+
+	if stealthBtnClickArea then stealthBtnClickArea:SetAttribute("Tooltip", targetTooltip) end
+	if GuiElements.stealthModeStroke then TweenService:Create(GuiElements.stealthModeStroke, DimTweenInfo, { Color = targetStrokeColor }):Play() end
+	if GuiElements.stealthModeCore then TweenService:Create(GuiElements.stealthModeCore, DimTweenInfo, { BackgroundColor3 = targetCoreColor }):Play() end
+
+    if stealthBtnContainer then
+        local pulseScale = stealthBtnContainer:FindFirstChildWhichIsA("UIScale") or Instance.new("UIScale", stealthBtnContainer)
+        local pressTweenInfo = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        local releaseTweenInfo = TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        local s1 = TweenService:Create(pulseScale, pressTweenInfo, {Scale = 0.9})
+        local s2 = TweenService:Create(pulseScale, releaseTweenInfo, {Scale = 1})
+        s1.Completed:Connect(function() s2:Play() end); s1:Play()
+    end
+
+	local targetBgTrans = isStealthMode and 0.5 or 0; local targetTextTrans = isStealthMode and 0.3 or 0;
+	local buttonsToFade = {GuiElements.fovChangerButton, GuiElements.resetFovButton, GuiElements.espButton}
+	for _, button in ipairs(buttonsToFade) do if button then TweenService:Create(button, DimTweenInfo, {BackgroundTransparency = targetBgTrans}):Play(); TweenService:Create(button, DimTweenInfo, {TextTransparency = targetTextTrans}):Play(); end end
+
+	if isStealthMode then
+		isFOVChangerEnabled = false; Camera.FieldOfView = gameDefaultFOV;
+		if GuiElements.fovChangerButton then GuiElements.fovChangerButton.Text = "FOV: OFF"; GuiElements.fovChangerButton.TextColor3 = THEME.Error; GuiElements.fovChangerButton:SetAttribute("CurrentTextColor", THEME.Error); end
+		if GuiElements.camFovSliderContainer then setSliderEnabled(GuiElements.camFovSliderContainer, false); setSliderValue(GuiElements.camFovSliderContainer, gameDefaultFOV); end
+		if isESPEnabled then toggleESP(false) end
+	else
+		if GuiElements.fovChangerButton then local initialFovTextColor = isFOVChangerEnabled and THEME.Success or THEME.Error; GuiElements.fovChangerButton.TextColor3 = initialFovTextColor; GuiElements.fovChangerButton:SetAttribute("CurrentTextColor", initialFovTextColor); GuiElements.fovChangerButton.Text = isFOVChangerEnabled and "FOV: ON" or "FOV: OFF"; end
+		if GuiElements.camFovSliderContainer then setSliderEnabled(GuiElements.camFovSliderContainer, isFOVChangerEnabled); setSliderValue(GuiElements.camFovSliderContainer, isFOVChangerEnabled and currentCameraFOV or gameDefaultFOV); end
+		if GuiElements.espButton then local initialEspTextColor = isESPEnabled and THEME.Success or THEME.Error; GuiElements.espButton.TextColor3 = initialEspTextColor; GuiElements.espButton:SetAttribute("CurrentTextColor", initialEspTextColor); GuiElements.espButton.Text = isESPEnabled and "ESP: ON" or "ESP: OFF"; end
+	end
+	updateFOVCircle(); updateAllExcludedLabelsVisibility();
+end
+
+function createBeautifulGUI()
+	local oldGui = playerGui:FindFirstChild("TheMistGUI_DelaySwitcher_V24"); if oldGui then oldGui:Destroy() end
+	local gui = Instance.new("ScreenGui", playerGui); gui.Name = "TheMistGUI_DelaySwitcher_V24"; gui.ResetOnSpawn = false; gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; gui.DisplayOrder = 999;
+
+    -- <<< NEW: ViewportConstrainer Frame >>>
+    viewportFrame = Instance.new("Frame", gui)
+    viewportFrame.Name = "ViewportConstrainer"
+    viewportFrame.BackgroundTransparency = 1 -- Invisible, just for layout
+    viewportFrame.AnchorPoint = Vector2.new(0, 0)
+    local topScreenInset = GuiService:GetGuiInset().Y
+    viewportFrame.Position = UDim2.new(0, 0, 0, topScreenInset)
+    viewportFrame.Size = UDim2.new(1, 0, 1, -topScreenInset) -- Fill available space below top bar
+    viewportFrame.ClipsDescendants = true -- Clip mainFrame if it somehow tries to exceed this (e.g. during animation before size constraint fully applies)
+
+	mainFrame = Instance.new("Frame", viewportFrame); -- <<< MODIFIED: Parent to viewportFrame
+    mainFrame.Visible = false
+	mainFrame.AnchorPoint = Vector2.new(0, 0.5); -- Vertical center within viewportFrame, slides from left
+	mainFrame.Size = UDim2.fromScale(0, 0); -- Initial size for animation, width set by constraint, height by AutoSize
+	mainFrame.AutomaticSize = Enum.AutomaticSize.Y;
+	mainFrame.BackgroundColor3 = THEME.Background;
+	mainFrame.BackgroundTransparency = 0
+	mainFrame.BorderSizePixel = 0;
+	mainFrame.ClipsDescendants = true;
+	mainFrame.ZIndex = 5;
+	mainFrame.Active = true;
+	mainFrame.Draggable = false;
+	local frameCorner = Instance.new("UICorner", mainFrame); frameCorner.CornerRadius = UDim.new(0, THEME.CornerRadius);
+	
+    local sizeConstraint = Instance.new("UISizeConstraint", mainFrame);
+    sizeConstraint.MinSize = Vector2.new(THEME.PanelMinWidth, 190);
+    -- MaxSize.Y will be dynamically set to viewportFrame's height
+    -- MaxSize.X will be THEME.PanelMaxWidth
+    
+    -- <<< NEW: Function to update mainFrame's MaxSize based on viewportFrame >>>
+    local function updateMainFrameMaxSize()
+        if viewportFrame and viewportFrame.Parent and sizeConstraint and sizeConstraint.Parent then
+            -- Allow a little vertical padding within the viewportFrame if desired
+            local verticalPaddingInViewport = THEME.Padding * 0 -- e.g. THEME.Padding * 2 for padding at top and bottom of mainFrame within viewport
+            local availableHeight = viewportFrame.AbsoluteSize.Y - verticalPaddingInViewport
+            sizeConstraint.MaxSize = Vector2.new(THEME.PanelMaxWidth, math.max(sizeConstraint.MinSize.Y, availableHeight))
+        end
+    end
+
+    -- Update mainFrame's MaxSize when viewportFrame's size changes (e.g., window resize)
+    if viewportFrame then
+        viewportFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateMainFrameMaxSize)
+    end
+    -- Initial call to set MaxSize
+    task.defer(updateMainFrameMaxSize) -- Defer to ensure viewportFrame has its AbsoluteSize calculated
+
+	local bgGradient = Instance.new("UIGradient", mainFrame); bgGradient.Rotation = 135; bgGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, THEME.BackgroundSlightlyLighter), ColorSequenceKeypoint.new(0.3, THEME.Background), ColorSequenceKeypoint.new(0.5, THEME.Primary), ColorSequenceKeypoint.new(0.8, THEME.BackgroundSubtleVariant), ColorSequenceKeypoint.new(1, THEME.BackgroundSlightlyLighter), }); bgGradient.Offset = Vector2.new(-1, -1);
+	local padding = Instance.new("UIPadding", mainFrame); padding.PaddingTop = UDim.new(0, THEME.Padding); padding.PaddingBottom = UDim.new(0, THEME.Padding); padding.PaddingLeft = UDim.new(0, THEME.Padding); padding.PaddingRight = UDim.new(0, THEME.Padding);
+	local listLayout = Instance.new("UIListLayout", mainFrame); listLayout.Padding = UDim.new(0, THEME.Padding); listLayout.SortOrder = Enum.SortOrder.LayoutOrder; listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; listLayout.FillDirection = Enum.FillDirection.Vertical;
+
+	getTooltipLabel(gui) -- Create tooltip frame, parented to ScreenGui
+
+	local titleFrame = Instance.new("Frame", mainFrame); titleFrame.Size = UDim2.new(1, 0, 0, THEME.TitleSize + 2); titleFrame.BackgroundTransparency = 1; titleFrame.LayoutOrder = 0;
+	local titleLabel = Instance.new("TextLabel", titleFrame); titleLabel.Size = UDim2.new(1, -25, 1, 0); titleLabel.Position = UDim2.fromOffset(0, 0); titleLabel.BackgroundTransparency = 1; titleLabel.Text = "THE MIST"; titleLabel.TextColor3 = THEME.Accent; titleLabel.Font = THEME.FontTitle; titleLabel.TextSize = THEME.TitleSize; titleLabel.TextXAlignment = Enum.TextXAlignment.Left;
+	local subtitleLabel = Instance.new("TextLabel", mainFrame); subtitleLabel.Size = UDim2.new(1, -THEME.Padding*2, 0, THEME.SubtitleSize + 2); subtitleLabel.Position = UDim2.fromOffset(THEME.Padding, 0); subtitleLabel.BackgroundTransparency = 1;
+    subtitleLabel.Text = "triggerbot-module v3.2"; subtitleLabel.TextColor3 = THEME.TextDisabled; subtitleLabel.Font = THEME.Font; subtitleLabel.TextSize = THEME.SubtitleSize; subtitleLabel.LayoutOrder = 1; subtitleLabel.TextXAlignment = Enum.TextXAlignment.Left;
+	local stealthContainer = Instance.new("Frame", titleFrame); stealthContainer.Name = "StealthModeContainer"; stealthContainer.Size = UDim2.fromOffset(18, 18); stealthContainer.AnchorPoint = Vector2.new(1, 0.5); stealthContainer.Position = UDim2.new(1, -THEME.Padding, 0.5, 0); stealthContainer.BackgroundColor3 = THEME.Primary; stealthContainer.BackgroundTransparency = 0.3; local scCorner = Instance.new("UICorner", stealthContainer); scCorner.CornerRadius = UDim.new(0, 4); local scStroke = Instance.new("UIStroke", stealthContainer); scStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; scStroke.Color = isStealthMode and THEME.Error or THEME.Accent; scStroke.Thickness = 1.5; scStroke.Transparency = 0.2; GuiElements.stealthModeStroke = scStroke; local scCore = Instance.new("Frame", stealthContainer); scCore.Name = "Core"; scCore.Size = UDim2.fromScale(0.5, 0.5); scCore.AnchorPoint = Vector2.new(0.5, 0.5); scCore.Position = UDim2.fromScale(0.5, 0.5); scCore.BackgroundColor3 = isStealthMode and THEME.Error or THEME.Accent; scCore.BackgroundTransparency = 0.1; local scCoreCorner = Instance.new("UICorner", scCore); scCoreCorner.CornerRadius = UDim.new(0.5, 0); GuiElements.stealthModeCore = scCore; local stealthClickButton = Instance.new("TextButton", stealthContainer); stealthClickButton.Name = "StealthClickArea"; stealthClickButton.Size = UDim2.fromScale(1, 1); stealthClickButton.BackgroundTransparency = 1; stealthClickButton.Text = ""; stealthClickButton.ZIndex = 2; stealthClickButton:SetAttribute("Tooltip", isStealthMode and "Switch to Normal Mode" or "Switch to Stealth Mode"); GuiElements.stealthModeClickButton = stealthClickButton; local scScale = Instance.new("UIScale", stealthContainer); scScale.Scale = 1; local hoverTweenInfoStealth = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out); stealthClickButton.MouseEnter:Connect(function() TweenService:Create(scScale, hoverTweenInfoStealth, {Scale = 1.1}):Play(); local currentStrokeColor = isStealthMode and THEME.Error or THEME.Accent; TweenService:Create(scStroke, hoverTweenInfoStealth, {Color = currentStrokeColor:Lerp(Color3.new(1,1,1), 0.3), Transparency = 0}):Play(); if stealthClickButton:GetAttribute("Tooltip") ~= "" then showTooltip(stealthClickButton, stealthClickButton:GetAttribute("Tooltip")) end end); stealthClickButton.MouseLeave:Connect(function() TweenService:Create(scScale, hoverTweenInfoStealth, {Scale = 1}):Play(); local currentStrokeColor = isStealthMode and THEME.Error or THEME.Accent; TweenService:Create(scStroke, hoverTweenInfoStealth, {Color = currentStrokeColor, Transparency = 0.2}):Play(); hideTooltip(); end); stealthClickButton.MouseButton1Click:Connect(toggleStealthMode);
+	local mainControlsFrame = Instance.new("Frame", mainFrame); mainControlsFrame.Size = UDim2.new(1, 0, 0, THEME.ElementHeight * 2 + THEME.Padding); mainControlsFrame.BackgroundTransparency = 1; mainControlsFrame.LayoutOrder = 2; local mainControlsLayout = Instance.new("UIListLayout", mainControlsFrame); mainControlsLayout.Padding = UDim.new(0, THEME.Padding); mainControlsLayout.SortOrder = Enum.SortOrder.LayoutOrder; mainControlsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; local initialAutoTargetTextColor = isAutoTargetEnabled and THEME.Success or THEME.Error; local initialEspTextColor = isESPEnabled and THEME.Success or THEME.Error; GuiElements.autoTargetButton = createStyledButton(mainControlsFrame, "TARGET: OFF", initialAutoTargetTextColor, UDim2.new(), UDim2.new(1,0,0,THEME.ElementHeight), "Toggle Auto Targeting"); GuiElements.espButton = createStyledButton(mainControlsFrame, "ESP: ON", initialEspTextColor, UDim2.new(), UDim2.new(1,0,0,THEME.ElementHeight), "Toggle Player ESP"); GuiElements.autoTargetButton.Text = isAutoTargetEnabled and "TARGET: ON" or "TARGET: OFF"; GuiElements.espButton.Text = isESPEnabled and "ESP: ON" or "ESP: OFF"; GuiElements.espButton.BackgroundTransparency = isStealthMode and 0.5 or 0; GuiElements.espButton.TextTransparency = isStealthMode and 0.3 or 0;
+	local settingsFrame = Instance.new("Frame", mainFrame); settingsFrame.Size = UDim2.new(1, 0, 0, 0); settingsFrame.AutomaticSize = Enum.AutomaticSize.Y; settingsFrame.BackgroundTransparency = 1; settingsFrame.LayoutOrder = 4; local settingsLayout = Instance.new("UIListLayout", settingsFrame); settingsLayout.Padding = UDim2.new(0, THEME.Padding + 2); settingsLayout.SortOrder = Enum.SortOrder.LayoutOrder; settingsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; settingsLayout.FillDirection = Enum.FillDirection.Vertical;
+
+    -- Target FOV Slider
+	local targetFovSliderContainer, targetFovValueLabel = createSlider(settingsFrame, "Target FOV", 0, 180, targetingFOV, function(value) targetingFOV = value; updateFOVCircle() end, "Aim assist Field of View (degrees)"); GuiElements.targetFovSliderContainer = targetFovSliderContainer; GuiElements.targetFovValueLabel = targetFovValueLabel;
+    targetFovSliderContainer.LayoutOrder = 1
+
+    -- SHOOT DELAY MODE SWITCHER
+    local delayModeSwitcherFrame = Instance.new("TextButton", settingsFrame); delayModeSwitcherFrame.Name = "DelayModeSwitcherFrame"; delayModeSwitcherFrame.Size = UDim2.new(1, 0, 0, THEME.ElementHeight) ; delayModeSwitcherFrame.BackgroundTransparency = 1; delayModeSwitcherFrame.Text = ""; delayModeSwitcherFrame.AutoButtonColor = false; delayModeSwitcherFrame.LayoutOrder = 2; delayModeSwitcherFrame:SetAttribute("Tooltip", "Click to switch delay mode");
+    local switchTrack = Instance.new("Frame", delayModeSwitcherFrame); switchTrack.Name = "Track"; switchTrack.Size = UDim2.new(1, -20, 1, -4) ; switchTrack.AnchorPoint = Vector2.new(0.5, 0.5); switchTrack.Position = UDim2.fromScale(0.5, 0.5); switchTrack.BackgroundColor3 = THEME.PrimaryLighter; switchTrack.BackgroundTransparency = 0.5; local trackCorner = Instance.new("UICorner", switchTrack); trackCorner.CornerRadius = UDim.new(0, THEME.CornerRadius); local trackStroke = Instance.new("UIStroke", switchTrack); trackStroke.Color = THEME.Secondary; trackStroke.Transparency = 0.6; trackStroke.Thickness = 1;
+    local switchThumb = Instance.new("Frame", switchTrack); switchThumb.Name = "Thumb"; switchThumb.Size = UDim2.new(0.5, -2, 1, -4) ; switchThumb.Position = UDim2.fromScale(0, 0.5); switchThumb.AnchorPoint = Vector2.new(0, 0.5); switchThumb.BackgroundColor3 = THEME.Accent; switchThumb.BorderSizePixel = 0; local thumbCorner = Instance.new("UICorner", switchThumb); thumbCorner.CornerRadius = UDim.new(0, THEME.CornerRadius - 2); GuiElements.delaySwitcherThumb = switchThumb;
+    local labelBlatant = Instance.new("TextLabel", switchTrack); labelBlatant.Name = "LabelBlatant"; labelBlatant.Size = UDim2.new(0.5, 0, 1, 0); labelBlatant.Position = UDim2.fromScale(0, 0.5); labelBlatant.AnchorPoint = Vector2.new(0, 0.5); labelBlatant.BackgroundTransparency = 1; labelBlatant.Font = THEME.Font; labelBlatant.Text = "Blatant"; labelBlatant.TextSize = THEME.SmallTextSize; labelBlatant.TextColor3 = THEME.TextDisabled; labelBlatant.TextXAlignment = Enum.TextXAlignment.Center; GuiElements.delayLabelBlatant = labelBlatant;
+    local labelNormal = Instance.new("TextLabel", switchTrack); labelNormal.Name = "LabelNormal"; labelNormal.Size = UDim2.new(0.5, 0, 1, 0); labelNormal.Position = UDim2.fromScale(0.5, 0.5); labelNormal.AnchorPoint = Vector2.new(0, 0.5); labelNormal.BackgroundTransparency = 1; labelNormal.Font = THEME.Font; labelNormal.Text = "Normal"; labelNormal.TextSize = THEME.SmallTextSize; labelNormal.TextColor3 = THEME.Text; labelNormal.TextXAlignment = Enum.TextXAlignment.Center; GuiElements.delayLabelNormal = labelNormal;
+    local function updateSwitcherVisuals(newMode, skipAnim) local targetThumbPos = (newMode == "Blatant") and UDim2.fromScale(0, 0.5) or UDim2.fromScale(0.5, 0.5); local blatantColor = (newMode == "Blatant") and THEME.TextActive or THEME.TextDisabled; local normalColor = (newMode == "Normal") and THEME.TextActive or THEME.TextDisabled; if skipAnim then switchThumb.Position = targetThumbPos; labelBlatant.TextColor3 = blatantColor; labelNormal.TextColor3 = normalColor; else TweenService:Create(switchThumb, SwitchAnimationInfo, { Position = targetThumbPos }):Play(); TweenService:Create(labelBlatant, TextColorTweenInfo, { TextColor3 = blatantColor }):Play(); TweenService:Create(labelNormal, TextColorTweenInfo, { TextColor3 = normalColor }):Play(); end end;
+    delayModeSwitcherFrame.MouseButton1Click:Connect(function() hideTooltip(); if currentDelayMode == "Normal" then currentDelayMode = "Blatant"; shootDelayMilliseconds = 0; updateSwitcherVisuals("Blatant"); else currentDelayMode = "Normal"; shootDelayMilliseconds = 264; updateSwitcherVisuals("Normal"); end end); delayModeSwitcherFrame.MouseEnter:Connect(function() if delayModeSwitcherFrame:GetAttribute("Tooltip") ~= "" then showTooltip(delayModeSwitcherFrame, delayModeSwitcherFrame:GetAttribute("Tooltip")) end end); delayModeSwitcherFrame.MouseLeave:Connect(hideTooltip);
+    updateSwitcherVisuals(currentDelayMode, true);
+
+    -- Camera FOV Slider
+    local camFovSliderContainer, camFovValueLabel = createSlider(settingsFrame, "Camera FOV", 30, 120, currentCameraFOV, function(value) if isFOVChangerEnabled then currentCameraFOV = value; Camera.FieldOfView = value; updateFOVCircle() end end, "Camera Field of View (degrees)"); GuiElements.camFovSliderContainer = camFovSliderContainer; GuiElements.camFovValueLabel = camFovValueLabel;
+    camFovSliderContainer.LayoutOrder = 3
+
+    -- FOV Control Buttons
+    local fovControlFrame = Instance.new("Frame", settingsFrame); fovControlFrame.Size = UDim2.new(1, 0, 0, THEME.SmallElementHeight * 2 + THEME.Padding); fovControlFrame.BackgroundTransparency = 1; fovControlFrame.LayoutOrder = 4; local fovControlLayout = Instance.new("UIListLayout", fovControlFrame); fovControlLayout.Padding = UDim.new(0, THEME.Padding); fovControlLayout.SortOrder = Enum.SortOrder.LayoutOrder; fovControlLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; local initialFovTextColor = isFOVChangerEnabled and THEME.Success or THEME.Error; GuiElements.fovChangerButton = createStyledButton(fovControlFrame, "FOV: ON", initialFovTextColor, UDim2.new(), UDim2.new(1,0,0,THEME.SmallElementHeight), "Toggle Camera FOV Changer"); GuiElements.resetFovButton = createStyledButton(fovControlFrame, "RESET", THEME.ButtonText, UDim2.new(), UDim2.new(1,0,0,THEME.SmallElementHeight), "Reset Camera FOV to Game Default ("..tostring(math.floor(gameDefaultFOV))..")"); GuiElements.fovChangerButton.TextSize = THEME.SmallTextSize; GuiElements.resetFovButton.TextSize = THEME.SmallTextSize; GuiElements.fovChangerButton.Text = isFOVChangerEnabled and "FOV: ON" or "FOV: OFF"; GuiElements.fovChangerButton.BackgroundTransparency = isStealthMode and 0.5 or 0; GuiElements.fovChangerButton.TextTransparency = isStealthMode and 0.3 or 0; GuiElements.resetFovButton.BackgroundTransparency = isStealthMode and 0.5 or 0; GuiElements.resetFovButton.TextTransparency = isStealthMode and 0.3 or 0; setSliderEnabled(GuiElements.camFovSliderContainer, not isStealthMode and isFOVChangerEnabled);
+
+    -- Player List Frame
+	local listTitle = Instance.new("TextLabel", mainFrame); listTitle.Size = UDim2.new(1, -THEME.Padding*2, 0, THEME.SmallElementHeight); listTitle.Position = UDim2.fromOffset(THEME.Padding, 0); listTitle.BackgroundTransparency = 1; listTitle.Text = "NEARBY ENTITIES"; listTitle.TextColor3 = THEME.TextDisabled; listTitle.Font = THEME.Font; listTitle.TextSize = THEME.SmallTextSize; listTitle.TextXAlignment = Enum.TextXAlignment.Left; listTitle.LayoutOrder = 6; local playerListHeight = 90; local playerListFrame = Instance.new("ScrollingFrame", mainFrame); playerListFrame.Size = UDim2.new(1, 0, 0, playerListHeight); playerListFrame.BackgroundTransparency = 1; playerListFrame.BackgroundColor3 = THEME.Background; playerListFrame.BorderSizePixel = 0; playerListFrame.LayoutOrder = 7; playerListFrame.ScrollBarThickness = 3; playerListFrame.ScrollBarImageColor3 = THEME.Accent; playerListFrame.CanvasSize = UDim2.new(0, 0, 0, 0); playerListFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y; playerListFrame.ClipsDescendants = true; local listFrameCorner = Instance.new("UICorner", playerListFrame); listFrameCorner.CornerRadius = UDim.new(0, THEME.CornerRadius / 2); local listStroke = Instance.new("UIStroke", playerListFrame); listStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; listStroke.Color = THEME.Tertiary; listStroke.Thickness = THEME.StrokeThickness; listStroke.Transparency = 0.6; local playerListLayout = Instance.new("UIListLayout", playerListFrame); playerListLayout.Padding = UDim.new(0, 3); playerListLayout.SortOrder = Enum.SortOrder.LayoutOrder; playerListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; playerListLayout.FillDirection = Enum.FillDirection.Vertical; local listPadding = Instance.new("UIPadding", playerListFrame); listPadding.PaddingLeft = UDim.new(0, 2); listPadding.PaddingRight = UDim.new(0, 2); listPadding.PaddingTop = UDim.new(0, 2); listPadding.PaddingBottom = UDim.new(0, 2); GuiElements.playerListFrame = playerListFrame; GuiElements.playerListLayout = playerListLayout;
+	local footerFrame = Instance.new("Frame", mainFrame); footerFrame.Size = UDim2.new(1, 0, 0, 0); footerFrame.AutomaticSize = Enum.AutomaticSize.Y; footerFrame.BackgroundTransparency = 1; footerFrame.LayoutOrder = 100; local footerLayout = Instance.new("UIListLayout", footerFrame); footerLayout.Padding = UDim.new(0, 0); footerLayout.SortOrder = Enum.SortOrder.LayoutOrder; footerLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; footerLayout.FillDirection = Enum.FillDirection.Vertical; local disclaimerLabel = Instance.new("TextLabel", footerFrame); disclaimerLabel.Name = "DisclaimerLabel"; disclaimerLabel.Size = UDim2.new(1, -THEME.Padding*2, 0, THEME.DisclaimerSize + 4); disclaimerLabel.BackgroundTransparency = 1; disclaimerLabel.Font = THEME.Font; disclaimerLabel.Text = "Module executed via THE MIST HUB."; disclaimerLabel.TextColor3 = THEME.TextDisabled; disclaimerLabel.TextSize = THEME.DisclaimerSize; disclaimerLabel.TextWrapped = false; disclaimerLabel.TextXAlignment = Enum.TextXAlignment.Center; disclaimerLabel.LayoutOrder = 1; local disclaimerPadding = Instance.new("UIPadding", disclaimerLabel); disclaimerPadding.PaddingTop = UDim.new(0, 4);
+
+	task.wait() -- Allow initial size calculation for mainFrame's content
+
+	local currentAbsoluteWidth = mainFrame.AbsoluteSize.X
+	if currentAbsoluteWidth <= 0 then currentAbsoluteWidth = sizeConstraint.MaxSize.X end
+	if currentAbsoluteWidth <= 0 then currentAbsoluteWidth = THEME.PanelMaxWidth end
+    local initialHiddenXOffset = -(currentAbsoluteWidth + THEME.Padding * 2) -- Ensure it's fully off-screen
+	mainFrame.Position = UDim2.new(0, initialHiddenXOffset, 0.5, 0) -- Vertically centered in viewportFrame
+
+    task.delay(0.4, function()
+        if mainFrame and mainFrame.Parent then
+             mainFrame.Visible = true -- Make mainFrame renderable for animations
+        end
+    end)
+
+    local function animateBackground() while gui and gui.Parent and mainFrame and mainFrame.Parent do local animSpeed = 30; local startOffset = Vector2.new(-1, -1); local endOffset = Vector2.new(2, 2); bgGradient.Offset = startOffset; local bgTween = TweenService:Create(bgGradient, TweenInfo.new(animSpeed, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Offset = endOffset}); bgTween:Play(); bgTween.Completed:Wait(); task.wait(0.1); end end; task.spawn(animateBackground);
+
+	local panelTween = nil; local slideTweenInfo = TweenInfo.new(0.35, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out);
+    local invisibleToggleArea = Instance.new("TextButton", gui); -- Parent to ScreenGui for consistent screen position
+    invisibleToggleArea.Name = "InvisibleToggleArea";
+    invisibleToggleArea.Size = UDim2.new(0, 80, 0, 80);
+    invisibleToggleArea.AnchorPoint = Vector2.new(0, 1); -- Bottom-left of screen
+    invisibleToggleArea.Position = UDim2.new(0, THEME.Padding, 1, -THEME.Padding); -- Positioned at screen bottom-left
+    invisibleToggleArea.BackgroundTransparency = 1;
+    invisibleToggleArea.Text = "";
+    invisibleToggleArea.ZIndex = 10;
+	invisibleToggleArea.MouseButton1Click:Connect(function()
+        panelVisible = not panelVisible;
+        hideTooltip();
+        
+        local targetXOffset;
+        -- Ensure mainFrame has a calculated width for hiding animation
+        local currentPanelWidth = mainFrame.AbsoluteSize.X
+        if currentPanelWidth <= 0 then -- Fallback if AbsoluteSize not ready
+            local sc = mainFrame:FindFirstChildOfClass("UISizeConstraint")
+            currentPanelWidth = (sc and sc.MaxSize.X) or THEME.PanelMaxWidth
+        end
+
+        if panelVisible then
+            targetXOffset = THEME.Padding -- Position from left edge of viewportFrame
+            -- mainFrame.Visible = true; -- Already set to true after delay for animation
+        else
+            targetXOffset = -(currentPanelWidth + THEME.Padding * 2); -- Slide off to the left of viewportFrame
+        end
+        
+        local targetPosition = UDim2.new(0, targetXOffset, 0.5, 0); -- Vertically centered in viewportFrame
+        
+        if panelTween and panelTween.PlaybackState == Enum.PlaybackState.Playing then
+            panelTween:Cancel()
+        end
+        panelTween = TweenService:Create(mainFrame, slideTweenInfo, {Position = targetPosition});
+        
+        -- No need to manage mainFrame.Visible here for hiding, as it's inside viewportFrame which clips
+        -- and initialHiddenXOffset handles its off-screen position.
+        panelTween:Play();
+        updateFOVCircle();
+        updateAllExcludedLabelsVisibility();
+    end)
+    
+	local listHoverTweenInfo = TweenInfo.new(0.1); local function updatePlayerListGUI() if not GuiElements.playerListFrame or not GuiElements.playerListFrame.Parent then return end; if not character or not character:FindFirstChild("HumanoidRootPart") then return end; local existingButtons = {}; for _, child in ipairs(GuiElements.playerListFrame:GetChildren()) do if child:IsA("TextButton") and child.Name:match("_Entry$") then local userIdAttr = child:GetAttribute("PlayerUserId"); if userIdAttr then existingButtons[userIdAttr] = child end end end; local nearby = {}; local playerRootPos = character.HumanoidRootPart.Position; local displayRange = 50; for _, p in pairs(Players:GetPlayers()) do if p ~= player and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then local targetHumanoid = p.Character:FindFirstChildOfClass("Humanoid"); if targetHumanoid and targetHumanoid.Health > 0 then local targetRootPos = p.Character.HumanoidRootPart.Position; local dist = (playerRootPos - targetRootPos).Magnitude; if dist <= displayRange then table.insert(nearby, {Player = p, Dist = dist}) end end end end; table.sort(nearby, function(a, b) return a.Dist < b.Dist end); local playersInList = {}; for i, data in ipairs(nearby) do local p = data.Player; local userId = p.UserId; playersInList[userId] = true; local btn = existingButtons[userId]; if btn then btn.LayoutOrder = i; local distLabel = btn:FindFirstChild("DistLabel", true); if distLabel then distLabel.Text = math.floor(data.Dist) .. "m" end; local isExcluded = excludedPlayers[p]; local nameLabel = btn:FindFirstChild("NameLabel", true); if nameLabel then nameLabel.TextColor3 = isExcluded and THEME.RefExcludedColor or THEME.TextPlayerListNormal end; local excludeIcon = btn:FindFirstChild("ExcludeIcon", true); if excludeIcon then excludeIcon.Text = isExcluded and "✕" or "✓"; excludeIcon.TextColor3 = isExcluded and THEME.ExcludedIcon or THEME.Success; updateExcludedLabel(p) end; existingButtons[userId] = nil else btn = Instance.new("TextButton"); btn.Name = p.Name .. "_Entry"; btn.Size = UDim2.new(1, 0, 0, THEME.SmallElementHeight); btn.BackgroundColor3 = THEME.Primary; btn.BackgroundTransparency = 0.1; btn.Text = ""; btn.LayoutOrder = i; btn:SetAttribute("PlayerUserId", userId); btn.Parent = GuiElements.playerListFrame; local btnCorner = Instance.new("UICorner", btn); btnCorner.CornerRadius = UDim.new(0, THEME.CornerRadius / 2); local itemStroke = Instance.new("UIStroke", btn); itemStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; itemStroke.Color = THEME.Tertiary; itemStroke.Thickness = THEME.StrokeThickness; itemStroke.Transparency = 0.7; local itemPadding = Instance.new("UIPadding", btn); itemPadding.PaddingLeft = UDim.new(0, 5); itemPadding.PaddingRight = UDim.new(0, 5); local excludeIcon = Instance.new("TextLabel", btn); excludeIcon.Name = "ExcludeIcon"; excludeIcon.Size = UDim2.fromOffset(12, 12); excludeIcon.Position=UDim2.fromScale(0,0.5); excludeIcon.AnchorPoint=Vector2.new(0,0.5); excludeIcon.BackgroundTransparency = 1; excludeIcon.Font = Enum.Font.SourceSansBold; local isExcluded = excludedPlayers[p]; excludeIcon.Text = isExcluded and "✕" or "✓"; excludeIcon.TextColor3 = isExcluded and THEME.ExcludedIcon or THEME.Success; excludeIcon.TextSize = 14; local teamColorIndicator = Instance.new("Frame", btn); teamColorIndicator.Size = UDim2.fromOffset(5, 12); teamColorIndicator.Position=UDim2.fromOffset(18,0)+UDim2.fromScale(0,0.5); teamColorIndicator.AnchorPoint=Vector2.new(0,0.5); teamColorIndicator.BackgroundColor3 = p.Team and p.Team.TeamColor.Color or Color3.fromRGB(90,90,90); teamColorIndicator.BorderSizePixel = 0; local teamCorner = Instance.new("UICorner", teamColorIndicator); teamCorner.CornerRadius = UDim.new(0, 2); local nameLabel = Instance.new("TextLabel", btn); nameLabel.Name = "NameLabel"; nameLabel.Size = UDim2.new(1, -55, 1, 0); nameLabel.Position=UDim2.fromOffset(25,0); nameLabel.BackgroundTransparency = 1; nameLabel.Font = THEME.Font; nameLabel.Text = p.Name; nameLabel.TextColor3 = isExcluded and THEME.RefExcludedColor or THEME.TextPlayerListNormal; nameLabel.TextSize = THEME.SmallTextSize; nameLabel.TextXAlignment = Enum.TextXAlignment.Left; local distLabel = Instance.new("TextLabel", btn); distLabel.Name = "DistLabel"; distLabel.Size = UDim2.new(0, 30, 1, 0); distLabel.AnchorPoint=Vector2.new(1,0.5); distLabel.Position=UDim2.fromScale(1,0.5); distLabel.BackgroundTransparency = 1; distLabel.Font = THEME.Font; distLabel.Text = math.floor(data.Dist) .. "m"; distLabel.TextColor3 = THEME.TextDisabled; distLabel.TextSize = THEME.SmallTextSize; distLabel.TextXAlignment = Enum.TextXAlignment.Right; updateExcludedLabel(p); btn.MouseEnter:Connect(function() TweenService:Create(btn, listHoverTweenInfo, {BackgroundTransparency = 0}):Play() end); btn.MouseLeave:Connect(function() TweenService:Create(btn, listHoverTweenInfo, {BackgroundTransparency = 0.1}):Play() end); btn.MouseButton1Click:Connect(function() excludedPlayers[p] = not excludedPlayers[p]; updateExcludedLabel(p); local isNowExcluded = excludedPlayers[p]; nameLabel.TextColor3 = isNowExcluded and THEME.RefExcludedColor or THEME.TextPlayerListNormal; excludeIcon.Text = isNowExcluded and "✕" or "✓"; excludeIcon.TextColor3 = isNowExcluded and THEME.ExcludedIcon or THEME.Success; end) end end; for _, oldBtn in pairs(existingButtons) do oldBtn:Destroy() end; local itemHeight = THEME.SmallElementHeight; local paddingOffset = playerListLayout.Padding.Offset; if GuiElements.playerListFrame and GuiElements.playerListFrame:IsA("ScrollingFrame") then local childrenCount = 0; for _, child in ipairs(GuiElements.playerListFrame:GetChildren()) do if child:IsA("TextButton") and child.Name:match("_Entry$") then childrenCount = childrenCount + 1 end end; local totalContentHeight; if childrenCount > 0 then totalContentHeight = childrenCount * (itemHeight + paddingOffset) - paddingOffset; else totalContentHeight = 0; end; GuiElements.playerListFrame.CanvasSize = UDim2.new(0,0,0, math.max(playerListHeight, totalContentHeight)); end end
+	GuiElements.autoTargetButton.MouseButton1Click:Connect(function() isAutoTargetEnabled = not isAutoTargetEnabled; local newStateText = isAutoTargetEnabled and "TARGET: ON" or "TARGET: OFF"; local newTextColor = isAutoTargetEnabled and THEME.Success or THEME.Error; local button = GuiElements.autoTargetButton; button.Text = newStateText; button:SetAttribute("CurrentTextColor", newTextColor); TweenService:Create(button, TextColorTweenInfo, { TextColor3 = newTextColor }):Play(); updateFOVCircle(); end)
+	GuiElements.espButton.MouseButton1Click:Connect(function() if isStealthMode then return end; toggleESP(not isESPEnabled); end)
+	GuiElements.fovChangerButton.MouseButton1Click:Connect(function() if isStealthMode then return end; isFOVChangerEnabled = not isFOVChangerEnabled; local newStateText = isFOVChangerEnabled and "FOV: ON" or "FOV: OFF"; local newTextColor = isFOVChangerEnabled and THEME.Success or THEME.Error; local button = GuiElements.fovChangerButton; button.Text = newStateText; button:SetAttribute("CurrentTextColor", newTextColor); TweenService:Create(button, TextColorTweenInfo, { TextColor3 = newTextColor }):Play(); setSliderEnabled(GuiElements.camFovSliderContainer, isFOVChangerEnabled); if isFOVChangerEnabled then Camera.FieldOfView = currentCameraFOV; setSliderValue(GuiElements.camFovSliderContainer, currentCameraFOV); else Camera.FieldOfView = gameDefaultFOV; setSliderValue(GuiElements.camFovSliderContainer, gameDefaultFOV); end; updateFOVCircle(); end)
+	GuiElements.resetFovButton.MouseButton1Click:Connect(function() if isStealthMode then return end; currentCameraFOV = gameDefaultFOV; Camera.FieldOfView = gameDefaultFOV; setSliderValue(GuiElements.camFovSliderContainer, gameDefaultFOV); updateFOVCircle(); local button = GuiElements.resetFovButton; local originalTextColor = THEME.ButtonText; button:SetAttribute("CurrentTextColor", THEME.Accent); TweenService:Create(button, TextColorTweenInfo, {TextColor3 = THEME.Accent}):Play(); task.delay(THEME.TextColorFadeDuration * 1.1, function() if button and button.Parent then button:SetAttribute("CurrentTextColor", originalTextColor); TweenService:Create(button, TextColorTweenInfo, {TextColor3 = originalTextColor}):Play() end end) end)
+	local lastUpdate = 0; local updateInterval = 0.5; RunService.Heartbeat:Connect(function() local currentTime = tick(); if panelVisible and mainFrame.AbsolutePosition.X >= 0 and (currentTime - lastUpdate >= updateInterval) then pcall(updatePlayerListGUI); lastUpdate = currentTime end end); -- Check mainFrame.AbsolutePosition.X >= 0 for visibility
+
+    -- Set initial GUI states correctly
+	local initialAutoTargetTextColor = isAutoTargetEnabled and THEME.Success or THEME.Error; GuiElements.autoTargetButton.TextColor3 = initialAutoTargetTextColor; GuiElements.autoTargetButton:SetAttribute("CurrentTextColor", initialAutoTargetTextColor);
+	local initialEspTextColor = isESPEnabled and THEME.Success or THEME.Error; GuiElements.espButton.TextColor3 = initialEspTextColor; GuiElements.espButton:SetAttribute("CurrentTextColor", initialEspTextColor);
+	local initialFovTextColor = isFOVChangerEnabled and THEME.Success or THEME.Error; GuiElements.fovChangerButton.TextColor3 = initialFovTextColor; GuiElements.fovChangerButton:SetAttribute("CurrentTextColor", initialFovTextColor);
+	GuiElements.resetFovButton.TextColor3 = THEME.ButtonText; GuiElements.resetFovButton:SetAttribute("CurrentTextColor", THEME.ButtonText);
+	setSliderEnabled(GuiElements.camFovSliderContainer, not isStealthMode and isFOVChangerEnabled);
+	setSliderValue(GuiElements.camFovSliderContainer, isFOVChangerEnabled and currentCameraFOV or gameDefaultFOV);
+	setSliderValue(GuiElements.targetFovSliderContainer, targetingFOV);
+	return gui
+end
+
+--[[ INITIALIZATION AND MAIN LOOP ]]
+-- ... (Rest of the script: MainGui init, pcall, listeners, RenderStepped loop, cleanup remains unchanged) ...
+local MainGui = nil
+local success, err = pcall(function()
+	MainGui = createBeautifulGUI();
+	fovCircle = createDrawingCircle();
+	Camera.FieldOfView = isFOVChangerEnabled and currentCameraFOV or gameDefaultFOV;
+	toggleESP(isESPEnabled); 
+	updateFOVCircle();
+	updateAllExcludedLabelsVisibility();
+
+    setupToolListener(findTool()) 
+
+	local tapRaycastParams = RaycastParams.new(); tapRaycastParams.FilterType = Enum.RaycastFilterType.Blacklist; tapRaycastParams.IgnoreWater = true;
+	local function handleTapExclude(input, gameProcessedEvent) if gameProcessedEvent then return end; if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then local unitRay = Camera:ScreenPointToRay(input.Position.X, input.Position.Y); tapRaycastParams.FilterDescendantsInstances = {character, Storage, MainGui}; local rayResult = workspace:Raycast(unitRay.Origin, unitRay.Direction * 500, tapRaycastParams); if rayResult and rayResult.Instance then local hitPart = rayResult.Instance; local hitCharacter = hitPart:FindFirstAncestorWhichIsA("Model"); if hitCharacter and hitCharacter:FindFirstChildOfClass("Humanoid") then local targetPlayer = Players:GetPlayerFromCharacter(hitCharacter); if targetPlayer and targetPlayer ~= player then excludedPlayers[targetPlayer] = not excludedPlayers[targetPlayer]; updateExcludedLabel(targetPlayer);
+            if isESPEnabled then local h = Storage:FindFirstChild(targetPlayer.Name); if h and h:IsA("Highlight") then local originalColor = h.FillColor; local feedbackColor = excludedPlayers[targetPlayer] and THEME.Error or THEME.Success; h.FillColor = feedbackColor; h.FillTransparency = 0.3; task.delay(0.3, function() if h and h.Parent then h.FillColor = originalColor; h.FillTransparency = 0.5; end end) end end; end end end end end; UserInputService.InputBegan:Connect(handleTapExclude);
+	local function setupPlayerListeners(plr) if plr == player then return end; task.spawn(function() task.wait(0.1); if not plr or not plr.Parent then return end; if excludedPlayers[plr] then updateExcludedLabel(plr) end; if isESPEnabled then applyHighlight(plr) end; plr.CharacterAdded:Connect(function(newChar) task.wait(0.1); if not plr or not plr.Parent then return end; if excludedPlayers[plr] then updateExcludedLabel(plr) end; if isESPEnabled then applyHighlight(plr) end end); plr.CharacterRemoving:Connect(function(oldChar) local head = oldChar and oldChar:FindFirstChild("Head"); local existingLabel = head and head:FindFirstChild("ExcludeLabel"); if existingLabel then existingLabel:Destroy() end; local h = Storage:FindFirstChild(plr.Name); if h then h.Adornee = nil end end) end) end; Players.PlayerAdded:Connect(function(newPlayer) if newPlayer ~= player then setupPlayerListeners(newPlayer) end end); Players.PlayerRemoving:Connect(function(leavingPlayer) excludedPlayers[leavingPlayer] = nil; removeHighlight(leavingPlayer); end); for _, existingPlayer in pairs(Players:GetPlayers()) do setupPlayerListeners(existingPlayer) end;
+
+    player.CharacterAdded:Connect(function(newCharacter)
+        character = newCharacter;
+        task.wait(0.2);
+        backpack = player:FindFirstChild("Backpack") or player:WaitForChild("Backpack", 5);
+        setupToolListener(findTool()) 
+        for targetPlayer, isExcluded in pairs(excludedPlayers) do
+            if isExcluded then updateExcludedLabel(targetPlayer) end
+        end
+        newCharacter.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") then
+                setupToolListener(child)
+            end
+        end)
+        newCharacter.ChildRemoved:Connect(function(child)
+             if child == currentTool then
+                 setupToolListener(nil)
+             end
+        end)
+    end)
+
+    if character then
+         character.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") then
+                setupToolListener(child)
+            end
+         end)
+         character.ChildRemoved:Connect(function(child)
+             if child == currentTool then
+                 setupToolListener(nil)
+             end
+         end)
+    end
+
+    player.ChildAdded:Connect(function(child)
+        if child.Name == "Backpack" and child:IsA("Backpack") then
+            backpack = child
+        end
+    end);
+
+	RunService.RenderStepped:Connect(function(dt)
+        if not character or not character.Parent then
+            character = player.Character;
+            if not character then return end
+        end
+
+        local currentlyEquippedTool = nil
+        if character then currentlyEquippedTool = character:FindFirstChildOfClass("Tool") end
+        if currentlyEquippedTool ~= currentTool then
+             setupToolListener(currentlyEquippedTool)
+        end
+
+        if currentTool and not currentTool.Enabled and currentEffectiveCooldown > 0 then
+            if tick() - lastShotTime >= currentEffectiveCooldown then
+                 pcall(function() currentTool.Enabled = true end)
+                 currentEffectiveCooldown = 0
+            end
+        end
+        
+        pcall(updateFOVCircle);
+        pcall(shoot)
+    end);
+end)
+
+if not success then
+    warn("THE MIST Triggerbot Module (Delay Switcher) failed to initialize:", err) 
+    if MainGui and MainGui.Parent then MainGui:Destroy() end; if Storage and Storage.Parent then Storage:Destroy() end; if fovCircle and fovCircle.Destroy then fovCircle:Destroy(); fovCircle = nil end; if activatedConnection then activatedConnection:Disconnect() end
+end
+
+if script and script:IsA("Script") then script.Destroying:Connect(function()
+    if currentTool and currentTool.Parent and not currentTool.Enabled then
+        pcall(function() currentTool.Enabled = true end)
+    end
+    if activatedConnection then activatedConnection:Disconnect(); activatedConnection = nil end
+    if MainGui and MainGui.Parent then MainGui:Destroy() end; if Storage and Storage.Parent then Storage:Destroy() end; if fovCircle and fovCircle.Destroy then fovCircle:Destroy(); fovCircle = nil end;
+end) end
+
+--- END OF MODIFIED SCRIPT v27 (23 - Delay Mode Switcher + GUI Adaptation) ---
