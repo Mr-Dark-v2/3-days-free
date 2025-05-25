@@ -1,0 +1,2 @@
+task.wait(0.1) -- Give engine a moment
+print("THE MIST: Global toggle button created. AbsolutePosition: " .. tostring(MistGlobalToggleAreaButton.AbsolutePosition) .. ", AbsoluteSize: " .. tostring(MistGlobalToggleAreaButton.AbsoluteSize) .. ", Visible: " .. tostring(MistGlobalToggleAreaButton.Visible) .. ", Parent: " .. MistGlobalToggleAreaButton.Parent.Name)
