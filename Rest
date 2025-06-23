@@ -1,0 +1,190 @@
+--[[
+    Cute Movable Reset Button - Dark Theme with Animated Gradient
+    Author: YourNameHere
+    Version: 1.1.0
+    
+    Features:
+    - Creates a draggable button.
+    - Professional, rounded dark theme look.
+    - Animated gradient "shimmer" effect.
+    - "Juicy" feedback on click (scale and color pulse).
+    - Resets the player's character on click.
+    - Optimized for mobile (though it works on PC too).
+]]
+
+-- Services
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local SoundService = game:GetService("SoundService")
+local RunService = game:GetService("RunService") -- For gradient animation loop
+
+-- Player
+local LocalPlayer = Players.LocalPlayer
+
+-- Configuration
+local BUTTON_SIZE = UDim2.new(0, 70, 0, 70) -- Square button, 70x70 pixels
+local INITIAL_POSITION = UDim2.new(0.95, -80, 0.85, -80) -- Bottom-right-ish
+local BUTTON_TEXT = "🔄"
+local FONT = Enum.Font.GothamSemibold
+local TEXT_SIZE = 36
+
+-- Dark Theme Colors
+local BUTTON_BASE_COLOR = Color3.fromRGB(40, 45, 55)     -- Dark slate blue/gray
+local PRESSED_BASE_COLOR = Color3.fromRGB(25, 30, 40)    -- Even darker for press
+local STROKE_COLOR = Color3.fromRGB(180, 180, 190)       -- Light gray for contrast
+local TEXT_COLOR = Color3.fromRGB(255, 255, 255)         -- White
+
+-- Animated Shimmer Gradient Configuration
+local SHIMMER_COLOR = Color3.fromRGB(70, 80, 110)        -- Lighter blue/gray for the shimmer itself
+local SHIMMER_GRADIENT_ROTATION = 30                     -- Angle of the shimmer (degrees)
+local SHIMMER_ANIMATION_DURATION = 2.5                   -- Seconds for one full shimmer sweep
+local SHIMMER_OFFSET_START_X = -1.2                      -- Start offset for shimmer (off-screen)
+local SHIMMER_OFFSET_END_X = 1.2                         -- End offset for shimmer (off-screen)
+
+-- Click Feedback Animation
+local CLICK_ANIMATION_TIME = 0.1
+local SCALE_DOWN_FACTOR = 0.9
+
+-- Sound Effect
+local CLICK_SOUND_ID = "rbxassetid://159266304" -- Example: UI Click sound
+local clickSound = Instance.new("Sound")
+clickSound.SoundId = CLICK_SOUND_ID
+clickSound.Volume = 0.5
+clickSound.Parent = SoundService
+
+-- Create the ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "ResetCharacterGuiDark"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Create the Button
+local resetButton = Instance.new("TextButton")
+resetButton.Name = "MovableResetButtonDark"
+resetButton.Size = BUTTON_SIZE
+resetButton.Position = INITIAL_POSITION
+resetButton.BackgroundColor3 = BUTTON_BASE_COLOR -- Set the base dark color
+resetButton.Text = BUTTON_TEXT
+resetButton.TextColor3 = TEXT_COLOR
+resetButton.Font = FONT
+resetButton.TextSize = TEXT_SIZE
+resetButton.AutoButtonColor = false
+resetButton.Draggable = true
+resetButton.Active = true
+resetButton.Selectable = false
+resetButton.ZIndex = 10
+resetButton.Parent = screenGui
+
+-- Styling: Rounded Corners
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0.3, 0)
+uiCorner.Parent = resetButton
+
+-- Styling: Stroke (Outline)
+local uiStroke = Instance.new("UIStroke")
+uiStroke.Color = STROKE_COLOR
+uiStroke.Thickness = 2
+uiStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+uiStroke.Parent = resetButton
+
+-- Styling: Animated Shimmer Gradient
+local uiGradient = Instance.new("UIGradient")
+uiGradient.Rotation = SHIMMER_GRADIENT_ROTATION
+-- This gradient defines the shimmer itself. The rest is transparent
+-- to let the button's BackgroundColor3 show through.
+-- Transparency: 0 = Opaque, 1 = Fully Transparent
+uiGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, SHIMMER_COLOR, 1),     -- Transparent start
+    ColorSequenceKeypoint.new(0.40, SHIMMER_COLOR, 1),  -- Fully transparent before shimmer band
+    ColorSequenceKeypoint.new(0.50, SHIMMER_COLOR, 0),  -- Opaque shimmer band peak
+    ColorSequenceKeypoint.new(0.60, SHIMMER_COLOR, 1),  -- Fully transparent after shimmer band
+    ColorSequenceKeypoint.new(1, SHIMMER_COLOR, 1)      -- Transparent end
+})
+uiGradient.Offset = Vector2.new(SHIMMER_OFFSET_START_X, 0) -- Initial position of shimmer
+uiGradient.Parent = resetButton
+
+-- Shimmer Animation Function
+local shimmerTween -- To hold the active shimmer tween
+
+local function playShimmerAnimation()
+    if shimmerTween and shimmerTween.PlaybackState == Enum.PlaybackState.Playing then
+        shimmerTween:Cancel()
+    end
+
+    uiGradient.Offset = Vector2.new(SHIMMER_OFFSET_START_X, 0) -- Reset position
+
+    local tweenInfo = TweenInfo.new(
+        SHIMMER_ANIMATION_DURATION,
+        Enum.EasingStyle.Linear, -- Smooth, constant speed
+        Enum.EasingDirection.Out
+    )
+    local goal = { Offset = Vector2.new(SHIMMER_OFFSET_END_X, 0) }
+    
+    shimmerTween = TweenService:Create(uiGradient, tweenInfo, goal)
+    shimmerTween.Completed:Connect(function(playbackState)
+        if playbackState == Enum.PlaybackState.Completed then
+            playShimmerAnimation() -- Loop the animation
+        end
+    end)
+    shimmerTween:Play()
+end
+
+-- Feedback and Action Function
+local function onResetButtonClick()
+    if clickSound and clickSound.IsLoaded then
+        clickSound:Play()
+    end
+
+    local originalSize = resetButton.Size
+    -- Stop shimmer during click animation for cleaner feedback, then restart
+    if shimmerTween then shimmerTween:Pause() end
+
+    local tweenInfoDown = TweenInfo.new(CLICK_ANIMATION_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local goalDown = {
+        Size = UDim2.new(originalSize.X.Scale, originalSize.X.Offset * SCALE_DOWN_FACTOR, originalSize.Y.Scale, originalSize.Y.Offset * SCALE_DOWN_FACTOR),
+        BackgroundColor3 = PRESSED_BASE_COLOR
+    }
+    local tweenDown = TweenService:Create(resetButton, tweenInfoDown, goalDown)
+    tweenDown:Play()
+
+    tweenDown.Completed:Wait()
+
+    local tweenInfoUp = TweenInfo.new(CLICK_ANIMATION_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+    local goalUp = {
+        Size = originalSize,
+        BackgroundColor3 = BUTTON_BASE_COLOR
+    }
+    local tweenUp = TweenService:Create(resetButton, tweenInfoUp, goalUp)
+    tweenUp:Play()
+
+    tweenUp.Completed:Connect(function()
+        -- Resume shimmer after click animation (if it was playing)
+        if shimmerTween and shimmerTween.PlaybackState == Enum.PlaybackState.Paused then
+            -- Check if it should restart from beginning or resume
+            -- For simplicity, let's just ensure it's playing, which might restart it via playShimmerAnimation logic
+            playShimmerAnimation()
+        end
+    end)
+
+
+    task.delay(CLICK_ANIMATION_TIME / 2, function()
+        local character = LocalPlayer.Character
+        if character then
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health > 0 then
+                humanoid.Health = 0
+                print("Character reset initiated by dark theme button.")
+            end
+        end
+    end)
+end
+
+-- Connect the button's click event
+resetButton.MouseButton1Click:Connect(onResetButtonClick)
+
+-- Start the shimmer animation
+playShimmerAnimation()
+
+print("Cute Movable Reset Button (Dark Theme with Shimmer) loaded!")
