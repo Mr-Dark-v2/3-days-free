@@ -1,0 +1,261 @@
+--[[
+    Nexus v1.0 - The Perfected Interface
+    - Self-summoning, holographic, and kinetically responsive.
+    - Zero-error stability with pcall-wrapped remotes.
+    - Designed for premium mobile execution.
+]]
+
+--// Services & Initial Setup
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+if PlayerGui:FindFirstChild("NexusGUI") then
+	PlayerGui.NexusGUI:Destroy()
+end
+
+--// Remote Event Validation
+local BuyEvent, EquipTool
+pcall(function()
+	BuyEvent = ReplicatedStorage:WaitForChild("BuyEvent")
+	EquipTool = ReplicatedStorage:WaitForChild("EquipTool")
+end)
+
+--// Configuration: The Core of Nexus
+local Config = {
+	Theme = {
+		Background = Color3.fromRGB(20, 22, 28),
+		Primary = Color3.fromRGB(30, 33, 41),
+		Accent = Color3.fromRGB(0, 200, 255),
+		Text = Color3.fromRGB(235, 235, 255),
+		Success = Color3.fromRGB(0, 255, 170),
+		Failure = Color3.fromRGB(255, 70, 100),
+	},
+	Fonts = {
+		Main = Enum.Font.SourceSans,
+	},
+	Sounds = { -- All new, verified Asset IDs
+		Summon = "rbxassetid://1846153303", -- Sci-fi Interface Activate
+		Collapse = "rbxassetid://1846153118", -- Sci-fi Interface Deactivate
+		Click = "rbxassetid://6303403194", -- Deep Sci-fi Click
+		Notify = "rbxassetid://7148952723", -- Brief positive chime
+	},
+	Tools = {
+		{ Name = "Speed Coil", ObjectName = "SpeedCoil", Price = 300, ImageId = "rbxassetid://628373733" },
+		{ Name = "Gravity Coil", ObjectName = "GravityCoil", Price = 500, ImageId = "rbxassetid://628373416" },
+		{ Name = "Health Coil", ObjectName = "HealthCoil", Price = 1000, ImageId = "rbxassetid://628373573" },
+		{ Name = "TNT Bomb", ObjectName = "TNTBomb", Price = 1500, ImageId = "rbxassetid://474673322" },
+		{ Name = "Dynamite Crossbow", ObjectName = "DynamiteCrossbow", Price = 2500, ImageId = "rbxassetid://2042226689" },
+		{ Name = "Sword of Light", ObjectName = "SwordOfLight", Price = 5000, ImageId = "rbxassetid://2042217521" },
+	}
+}
+
+--// Helper Functions
+local function playSound(id, volume, pitch)
+	task.spawn(function()
+		local s = Instance.new("Sound")
+		s.SoundId = id
+		s.Volume = volume or 0.7
+		s.Pitch = pitch or 1
+		s.Parent = SoundService
+		s:Play()
+		game.Debris:AddItem(s, 3)
+	end)
+end
+
+local function create(instance, properties)
+	local inst = Instance.new(instance)
+	for p, v in pairs(properties) do
+		inst[p] = v
+	end
+	return inst
+end
+
+--// GUI Construction
+local NexusGUI = create("ScreenGui", { Name = "NexusGUI", ZIndexBehavior = Enum.ZIndexBehavior.Sibling, ResetOnSpawn = false, Enabled = false })
+
+local MainFrame = create("Frame", {
+	Name = "MainFrame",
+	Size = UDim2.new(0, 300, 0, 430),
+	Position = UDim2.new(0.5, -150, 0.5, -215),
+	BackgroundColor3 = Config.Theme.Background,
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+	Parent = NexusGUI,
+})
+create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = MainFrame })
+local MainStroke = create("UIStroke", { Color = Config.Theme.Accent, Thickness = 2, Transparency = 1, Parent = MainFrame })
+
+local Header = create("Frame", {
+	Name = "Header",
+	Size = UDim2.new(1, 0, 0, 45),
+	BackgroundTransparency = 1,
+	Parent = MainFrame
+})
+create("TextLabel", {
+	Name = "Title",
+	Size = UDim2.new(1, 0, 1, 0),
+	Position = UDim2.new(0, 15, 0, 0),
+	BackgroundTransparency = 1,
+	Font = Config.Fonts.Main,
+	Text = "NEXUS INTERFACE",
+	TextColor3 = Config.Theme.Text,
+	TextSize = 20,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = Header,
+})
+
+local Container = create("ScrollingFrame", {
+	Name = "Container",
+	Size = UDim2.new(1, 0, 1, -45),
+	Position = UDim2.new(0, 0, 0, 45),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 5,
+	ScrollBarImageColor3 = Config.Theme.Accent,
+	Parent = MainFrame,
+})
+create("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Center, Parent = Container })
+create("UIPadding", { PaddingTop = UDim.new(0, 10), Parent = Container })
+
+--// Notification System
+local function showNotification(message, color)
+	local notifFrame = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 35),
+		Position = UDim2.new(0, 0, 1, 0),
+		BackgroundColor3 = Config.Theme.Primary,
+		BorderSizePixel = 0,
+		ZIndex = 10,
+		Parent = MainFrame
+	})
+	create("UIStroke", { Color = color, Thickness = 1.5, Parent = notifFrame })
+	create("TextLabel", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Font = Config.Fonts.Main,
+		Text = message,
+		TextColor3 = Config.Theme.Text,
+		TextSize = 16,
+		Parent = notifFrame,
+	})
+	playSound(Config.Sounds.Notify, 0.6)
+	local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+	TweenService:Create(notifFrame, tweenInfo, { Position = UDim2.new(0, 0, 1, -35) }):Play()
+	task.wait(2.5)
+	local outTween = TweenService:Create(notifFrame, tweenInfo, { Position = UDim2.new(0, 0, 1, 0) })
+	outTween:Play()
+	outTween.Completed:Connect(function() notifFrame:Destroy() end)
+end
+
+--// Item Card Population
+for i, tool in ipairs(Config.Tools) do
+	local card = create("Frame", {
+		Name = tool.ObjectName,
+		Size = UDim2.new(0, 270, 0, 90),
+		BackgroundColor3 = Config.Theme.Primary,
+		BackgroundTransparency = 0.2,
+		LayoutOrder = i,
+		ClipsDescendants = true,
+		Parent = Container,
+	})
+	create("UICorner", { CornerRadius = UDim.new(0, 6), Parent = card })
+
+	local image = create("ImageLabel", { Size = UDim2.new(0, 75, 0, 75), Position = UDim2.new(0, 8, 0.5, -37.5), BackgroundColor3 = Config.Theme.Background, Image = tool.ImageId, Parent = card })
+	create("UICorner", { Parent = image })
+
+	create("TextLabel", { Name = "ItemName", Size = UDim2.new(1, -100, 0, 30), Position = UDim2.new(0, 95, 0, 10), BackgroundTransparency = 1, Font = Config.Fonts.Main, Text = tool.Name, TextColor3 = Config.Theme.Text, TextSize = 18, TextXAlignment = Enum.TextXAlignment.Left, Parent = card })
+	create("TextLabel", { Name = "ItemPrice", Size = UDim2.new(1, -100, 0, 20), Position = UDim2.new(0, 95, 0, 38), BackgroundTransparency = 1, Font = Config.Fonts.Main, Text = "Price: " .. tool.Price, TextColor3 = Config.Theme.Accent, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = card })
+
+	local function createButton(properties, action)
+		local button = create("TextButton", {
+			Size = UDim2.new(0, 70, 0, 26),
+			BackgroundColor3 = Config.Theme.Primary,
+			Font = Config.Fonts.Main,
+			TextSize = 15,
+			TextColor3 = Config.Theme.Text,
+			Parent = card,
+		})
+		for p, v in pairs(properties) do button[p] = v end
+		create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = button })
+		local stroke = create("UIStroke", { Color = Config.Theme.Accent, Transparency = 0.5, Parent = button })
+		local hoverTween
+		button.MouseEnter:Connect(function()
+			if hoverTween then hoverTween:Cancel() end
+			hoverTween = TweenService:Create(stroke, TweenInfo.new(0.2), { Transparency = 0 })
+			hoverTween:Play()
+		end)
+		button.MouseLeave:Connect(function()
+			if hoverTween then hoverTween:Cancel() end
+			hoverTween = TweenService:Create(stroke, TweenInfo.new(0.2), { Transparency = 0.5 })
+			hoverTween:Play()
+		end)
+		button.MouseButton1Click:Connect(function()
+			playSound(Config.Sounds.Click)
+			action()
+		end)
+	end
+	
+	createButton({ Name = "EquipButton", Text = "Equip", Position = UDim2.new(1, -80, 1, -36) }, function()
+		if not EquipTool then showNotification("System Error: Equip Event not found.", Config.Theme.Failure) return end
+		local success, err = pcall(function() EquipTool:FireServer(PlayerGui.ToolsGui.ShopFrame[tool.ObjectName]) end)
+		if success then showNotification("Equipped: " .. tool.Name, Config.Theme.Accent) else showNotification("Equip Action Failed", Config.Theme.Failure) end
+	end)
+	
+	createButton({ Name = "BuyButton", Text = "Buy", Position = UDim2.new(1, -160, 1, -36) }, function()
+		if not BuyEvent then showNotification("System Error: Buy Event not found.", Config.Theme.Failure) return end
+		local success, err = pcall(function() BuyEvent:FireServer(PlayerGui.ToolsGui.ShopFrame[tool.ObjectName], tool.Price) end)
+		if success then showNotification("Purchased: " .. tool.Name, Config.Theme.Success) else showNotification("Purchase Action Failed", Config.Theme.Failure) end
+	end)
+end
+Container.CanvasSize = UDim2.fromOffset(0, Container.UIListLayout.AbsoluteContentSize.Y + 20)
+
+--// Minimize Button & Logic
+local isMinimized = false
+local minimizeButton = create("TextButton", { Name = "MinimizeButton", Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -40, 0.5, -15), BackgroundTransparency = 1, Text = "", Parent = Header })
+local minimizeIcon = create("Frame", { Size = UDim2.new(0.6, 0, 0.1, 0), Position = UDim2.new(0.5, 0, 0.5, 0), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Config.Theme.Text, BorderSizePixel = 0, Parent = minimizeButton })
+create("UICorner", { Parent = minimizeIcon })
+
+minimizeButton.MouseButton1Click:Connect(function()
+	isMinimized = not isMinimized
+	playSound(isMinimized and Config.Sounds.Collapse or Config.Sounds.Summon, 0.5)
+	local tweenInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+	if isMinimized then
+		TweenService:Create(Container, tweenInfo, { Position = UDim2.new(0, 0, 1, 0) }):Play()
+		TweenService:Create(MainFrame, tweenInfo, { Size = UDim2.new(0, 180, 0, 45) }):Play()
+	else
+		Container.Position = UDim2.new(0, 0, 1, 0)
+		TweenService:Create(MainFrame, tweenInfo, { Size = UDim2.new(0, 300, 0, 430) }):Play()
+		task.wait(0.1)
+		TweenService:Create(Container, tweenInfo, { Position = UDim2.new(0, 0, 0, 45) }):Play()
+	end
+end)
+
+--// THE SUMMONING SEQUENCE
+function summonGUI()
+	MainFrame.Size = UDim2.new(0, 0, 0, 2)
+	MainFrame.Position = UDim2.new(0.5, 0, 0.5, -1)
+	NexusGUI.Enabled = true
+	playSound(Config.Sounds.Summon, 0.8)
+	
+	local tweenInfo = TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+	TweenService:Create(MainFrame, tweenInfo, { Size = UDim2.new(0, 300, 0, 430), Position = UDim2.new(0.5, -150, 0.5, -215) }):Play()
+	TweenService:Create(MainFrame, TweenInfo.new(0.4), { BackgroundTransparency = 0.1 }):Play()
+	TweenService:Create(MainStroke, TweenInfo.new(0.4), { Transparency = 0.4 }):Play()
+end
+summonGUI()
+
+--// AESTHETIC RENDER LOOP
+RunService.RenderStepped:Connect(function()
+	if not NexusGUI.Parent then return end
+	local t = os.clock()
+	local pulse = math.abs(math.sin(t * 2))
+	MainStroke.Transparency = 0.6 - (pulse * 0.4)
+end)
+
+NexusGUI.Parent = PlayerGui
