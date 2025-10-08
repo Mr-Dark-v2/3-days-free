@@ -36,7 +36,7 @@ local TapConfig = {
 
     POSITION_OFFSET = Vector2.new(0, 57), -- Set to 0,0 because IgnoreGuiInset is true
     Z_INDEX = 2147483647, -- Max ZIndex to be on top of other elements in the same layer
-    IGNORE_PROCESSED = false,                  -- For manual taps, set to false to show on buttons
+    IGNORE_PROCESSED = true,                  -- For manual taps, set to false to show on buttons
 }
 --//═══════════════════════════════════════════════
 
