@@ -1,7 +1,3 @@
---//═══════════════════════════════════════════════════════════════════════
---// MERGED SCRIPT: TRIGGERBOT + ANDROID TAP VISUALIZER
---//═══════════════════════════════════════════════════════════════════════
-
 --// Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,17 +5,15 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local GuiService = game:GetService("GuiService")
-local CoreGui = game:GetService("CoreGui")
+local CoreGui = game:GetService("CoreGui") -- We still need this
 local Debris = game:GetService("Debris")
 local SoundService = game:GetService("SoundService")
-
 --// Player & Camera
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local backpack = player:WaitForChild("Backpack")
-local playerGui = player:WaitForChild("PlayerGui")
+local playerGui = player:WaitForChild("PlayerGui") -- We might still need this for the main script GUI
 local Camera = workspace.CurrentCamera
-
 --//═══════════════════════════════════════════════
 --// ANDROID "SHOW TAPS" CONFIGURATION
 --//═══════════════════════════════════════════════
@@ -29,28 +23,25 @@ local TapConfig = {
     DOT_TRANSPARENCY = 0.45,                   -- inner brightness
     FADE_TIME = 0.18,                          -- linear quick fade
     FADE_EASING = Enum.EasingStyle.Linear,
-
     OUTLINE_ENABLED = true,
     OUTLINE_THICKNESS = 2,                     -- thickness of surrounding ring
     OUTLINE_TRANSPARENCY = 0.75,               -- softer than dot
-
     POSITION_OFFSET = Vector2.new(0, 57),
     Z_INDEX = 100,
     IGNORE_PROCESSED = true,                   -- For manual taps
 }
 --//═══════════════════════════════════════════════
-
 --// Tap Visualizer ScreenGui Setup
 local tapScreenGui = Instance.new("ScreenGui")
 tapScreenGui.Name = "TapVisualizer"
 tapScreenGui.IgnoreGuiInset = true
 tapScreenGui.ResetOnSpawn = false
 tapScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-tapScreenGui.DisplayOrder = 1000 -- Ensure it's on top of everything
-tapScreenGui.Parent = playerGui
-
-local activeDots = {} -- For tracking manual user taps
-
+tapScreenGui.DisplayOrder = 1000 -- Ensure it's on top of everything in its parent
+--// CHANGE: Parent to CoreGui instead of playerGui
+tapScreenGui.Parent = CoreGui -- Parent directly to CoreGui for maximum overlay priority
+--//═══════════════════════════════════════════════
+--// Rest of the Tap Visualizer code remains the same...
 --// Helper: create perfect circular frame for tap visuals
 local function makeCircle(size, color, transparency, zIndex)
     local frame = Instance.new("Frame")
@@ -60,11 +51,9 @@ local function makeCircle(size, color, transparency, zIndex)
     frame.BackgroundTransparency = transparency
     frame.BorderSizePixel = 0
     frame.ZIndex = zIndex
-
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(1, 0)
     corner.Parent = frame
-
     return frame
 end
 
@@ -74,7 +63,6 @@ local function createTapVisual(position)
     local dot = makeCircle(TapConfig.DOT_SIZE, TapConfig.DOT_COLOR, TapConfig.DOT_TRANSPARENCY, TapConfig.Z_INDEX)
     dot.Position = UDim2.fromOffset(position.X + TapConfig.POSITION_OFFSET.X, position.Y + TapConfig.POSITION_OFFSET.Y)
     dot.Parent = tapScreenGui
-    
     -- Outline
     local outline
     if TapConfig.OUTLINE_ENABLED then
@@ -87,23 +75,19 @@ local function createTapVisual(position)
         outline.Position = dot.Position
         outline.Parent = tapScreenGui
     end
-
     return { dot = dot, outline = outline }
 end
 
 --// NEW: Function for automated taps (fire-and-forget)
 local function createAutomatedTap(position2D)
     local visuals = createTapVisual(position2D)
-    
     local tweenInfo = TweenInfo.new(TapConfig.FADE_TIME, TapConfig.FADE_EASING, Enum.EasingDirection.Out)
-    
     -- Fade out the dot
     local dotTween = TweenService:Create(visuals.dot, tweenInfo, { BackgroundTransparency = 1 })
     dotTween.Completed:Connect(function()
         if visuals.dot then visuals.dot:Destroy() end
     end)
     dotTween:Play()
-
     -- Fade out the outline if it exists
     if visuals.outline then
         local outlineTween = TweenService:Create(visuals.outline, tweenInfo, { BackgroundTransparency = 1 })
@@ -113,6 +97,8 @@ local function createAutomatedTap(position2D)
         outlineTween:Play()
     end
 end
+
+local activeDots = {} -- For tracking manual user taps
 
 --// Handle Manual Tap Start
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -139,10 +125,8 @@ UserInputService.InputEnded:Connect(function(input)
     if visuals then
         activeDots[input] = nil
         local tweenInfo = TweenInfo.new(TapConfig.FADE_TIME, TapConfig.FADE_EASING, Enum.EasingDirection.Out)
-        
         local dotTween = TweenService:Create(visuals.dot, tweenInfo, { BackgroundTransparency = 1 })
         dotTween:Play()
-
         if visuals.outline then
             local outlineTween = TweenService:Create(visuals.outline, tweenInfo, { BackgroundTransparency = 1 })
             outlineTween:Play()
@@ -150,12 +134,16 @@ UserInputService.InputEnded:Connect(function(input)
                 if visuals.outline then visuals.outline:Destroy() end
             end)
         end
-
         dotTween.Completed:Connect(function()
             if visuals.dot then visuals.dot:Destroy() end
         end)
     end
 end)
+
+--//═══════════════════════════════════════════════
+--// TRIGGERBOT SCRIPT CORE
+--// (Rest of the triggerbot code continues here, unchanged for this specific modification)
+--// ... (The rest of the script follows, starting from the triggerbot configuration section) ...
 
 --//═══════════════════════════════════════════════
 --// TRIGGERBOT SCRIPT CORE
