@@ -34,7 +34,7 @@ local TapConfig = {
     OUTLINE_THICKNESS = 2,                     -- thickness of surrounding ring
     OUTLINE_TRANSPARENCY = 0.75,               -- softer than dot
 
-    POSITION_OFFSET = Vector2.new(0, 0), -- Set to 0,0 because IgnoreGuiInset is true
+    POSITION_OFFSET = Vector2.new(0, 57), -- Set to 0,0 because IgnoreGuiInset is true
     Z_INDEX = 2147483647, -- Max ZIndex to be on top of other elements in the same layer
     IGNORE_PROCESSED = false,                  -- For manual taps, set to false to show on buttons
 }
